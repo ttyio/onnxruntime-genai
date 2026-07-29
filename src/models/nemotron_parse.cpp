@@ -17,6 +17,12 @@ DeviceInterface& DeviceFor(const OrtValue& value, DeviceInterface& model_device)
   return on_cpu ? *GetDeviceInterface(DeviceType::CPU) : model_device;
 }
 
+bool HasName(const std::vector<std::string>& input_names,
+             const std::string& name) {
+  return std::find(input_names.begin(), input_names.end(), name) !=
+         input_names.end();
+}
+
 struct ContextCaches {
   std::vector<std::unique_ptr<OrtValue>> self;
   std::vector<std::unique_ptr<OrtValue>> cross;
@@ -194,7 +200,10 @@ class DecodeState : public State {
     attention_mask_.Add();
 
     const auto& decoder = model_.config_->model.decoder;
-    if (model_.decoder_session_info_.HasInput(decoder.inputs.encoder_hidden_states)) {
+    // session_info_ is the union of all three graphs. Use the decoder's own
+    // names for phase membership so prefill-only inputs are not fed to decode.
+    const auto decoder_input_names = model_.decoder_session_->GetInputNames();
+    if (HasName(decoder_input_names, decoder.inputs.encoder_hidden_states)) {
       encoder_hidden_states_input_index_ = inputs_.size();
       input_names_.push_back(decoder.inputs.encoder_hidden_states.c_str());
       inputs_.push_back(nullptr);
@@ -203,8 +212,12 @@ class DecodeState : public State {
     cross_input_names_.reserve(decoder.num_hidden_layers * 2);
     cross_input_indices_.reserve(decoder.num_hidden_layers * 2);
     for (int layer = 0; layer < decoder.num_hidden_layers; ++layer) {
-      AddCrossInput(ComposeKeyValueName(decoder.inputs.cross_past_key_names, layer));
-      AddCrossInput(ComposeKeyValueName(decoder.inputs.cross_past_value_names, layer));
+      AddCrossInput(
+          ComposeKeyValueName(decoder.inputs.cross_past_key_names, layer),
+          decoder_input_names);
+      AddCrossInput(
+          ComposeKeyValueName(decoder.inputs.cross_past_value_names, layer),
+          decoder_input_names);
     }
 
     self_cache_.Add();
@@ -229,13 +242,13 @@ class DecodeState : public State {
     auto& cache_device = *model_.p_device_kvcache_;
     for (size_t i = 0; i < caches.cross.size(); ++i) {
       auto source_info = caches.cross[i]->GetTensorTypeAndShapeInfo();
-      const auto expected_type = model_.decoder_session_info_.GetInputDataType(
+      const auto expected_type = model_.session_info_.GetInputDataType(
           cross_input_names_[i]);
       ValidateTensorType(source_info->GetElementType(), expected_type,
                          cross_input_names_[i]);
 
       const auto source_shape = source_info->GetShape();
-      const auto input_shape = model_.decoder_session_info_.GetInputShape(
+      const auto input_shape = model_.session_info_.GetInputShape(
           cross_input_names_[i]);
       if (source_shape.size() != input_shape.size()) {
         throw std::runtime_error("Nemotron Parse cross cache has an unexpected rank for " +
@@ -295,8 +308,9 @@ class DecodeState : public State {
   }
 
  private:
-  void AddCrossInput(std::string name) {
-    if (!model_.decoder_session_info_.HasInput(name)) {
+  void AddCrossInput(std::string name,
+                     const std::vector<std::string>& decoder_input_names) {
+    if (!HasName(decoder_input_names, name)) {
       throw std::runtime_error("Nemotron Parse decode graph is missing " + name);
     }
     cross_input_names_.push_back(std::move(name));
@@ -438,11 +452,13 @@ NemotronParseModel::NemotronParseModel(std::unique_ptr<Config> config,
   decoder_session_ = CreateSession(ort_env, decoder.filename,
                                    session_options_.get());
 
-  encoder_session_info_.Add(*encoder_session_);
-  prefill_session_info_.Add(*prefill_session_);
-  decoder_session_info_.Add(*decoder_session_);
+  // Shared names have phase-specific shapes. Keep decode metadata for those
+  // names, matching Whisper's decoder-first SessionInfo convention.
+  session_info_.Add(*decoder_session_);
+  session_info_.Add(*prefill_session_);
+  session_info_.Add(*encoder_session_);
 
-  const auto pixel_values_shape = encoder_session_info_.GetInputShape(
+  const auto pixel_values_shape = session_info_.GetInputShape(
       config_->model.vision.inputs.pixel_values);
   if (pixel_values_shape.size() != 4 || pixel_values_shape[0] != 1 ||
       pixel_values_shape[1] != 3 || pixel_values_shape[2] <= 0 ||
@@ -451,16 +467,13 @@ NemotronParseModel::NemotronParseModel(std::unique_ptr<Config> config,
         "Nemotron Parse encoder pixel_values must have static shape [1, 3, H, W]");
   }
 
-  const auto attention_mask_shape = decoder_session_info_.GetInputShape(
+  const auto attention_mask_shape = session_info_.GetInputShape(
       decoder.inputs.attention_mask);
   if (attention_mask_shape.size() != 2 || attention_mask_shape[1] <= 0 ||
       attention_mask_shape[1] != config_->model.context_length) {
     throw std::runtime_error(
         "Nemotron Parse context_length must match the static decode attention-mask shape");
   }
-
-  // Generic input/logits helpers must resolve the cached decoder's static shapes.
-  session_info_.Add(*decoder_session_);
 }
 
 std::unique_ptr<State> NemotronParseModel::CreateState(
