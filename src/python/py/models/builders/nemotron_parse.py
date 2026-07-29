@@ -402,14 +402,6 @@ class _NemotronParseDecoderWithPastTensorScatter(torch.nn.Module):
 
 
 class NemotronParseModel:
-    DECODER_CACHE_EXTRA_OPTIONS = frozenset(
-        {
-            "decoder_cache_mode",
-            "prefill_sequence_length",
-            "cache_sequence_length",
-        }
-    )
-
     def __init__(self, config, io_dtype, onnx_dtype, ep, cache_dir, extra_options):
         self.config = config
         self.io_dtype = io_dtype
