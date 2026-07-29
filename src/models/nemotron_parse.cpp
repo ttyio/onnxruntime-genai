@@ -6,16 +6,10 @@
 #include "input_ids.h"
 #include "kv_cache.h"
 #include "logits.h"
+#include "../nvtensorrtrtx/session_options.h"
 
 namespace Generators {
 namespace {
-
-constexpr const char* kNvProfileMinShapes =
-    "ep.nvtensorrtrtxexecutionprovider.nv_profile_min_shapes";
-constexpr const char* kNvProfileOptShapes =
-    "ep.nvtensorrtrtxexecutionprovider.nv_profile_opt_shapes";
-constexpr const char* kNvProfileMaxShapes =
-    "ep.nvtensorrtrtxexecutionprovider.nv_profile_max_shapes";
 
 void AppendProfileShape(std::ostringstream& profile, bool& first,
                         const std::string& name,
@@ -33,13 +27,6 @@ void AppendProfileShape(std::ostringstream& profile, bool& first,
     first_dimension = false;
     profile << dimension;
   }
-}
-
-void SetFixedNvTensorRtRtxProfile(OrtSessionOptions& options,
-                                  const std::string& profile) {
-  options.AddConfigEntry(kNvProfileMinShapes, profile.c_str());
-  options.AddConfigEntry(kNvProfileOptShapes, profile.c_str());
-  options.AddConfigEntry(kNvProfileMaxShapes, profile.c_str());
 }
 
 DeviceInterface& DeviceFor(const OrtValue& value, DeviceInterface& model_device) {
@@ -763,10 +750,10 @@ NemotronParseModel::NemotronParseModel(std::unique_ptr<Config> config,
                                  /*disable_graph_capture=*/true);
 
   if (p_device_->GetType() == DeviceType::NvTensorRtRtx) {
-    SetFixedNvTensorRtRtxProfile(*prefill_session_options_,
-                                 MakePrefillProfile(*config_));
-    SetFixedNvTensorRtRtxProfile(*session_options_,
-                                 MakeDecodeProfile(*config_));
+    NvTensorRtRtxExecutionProvider::SetFixedProfile(
+        *prefill_session_options_, MakePrefillProfile(*config_));
+    NvTensorRtRtxExecutionProvider::SetFixedProfile(
+        *session_options_, MakeDecodeProfile(*config_));
   }
 
   encoder_session_ = CreateSession(ort_env, config_->model.vision.filename,
