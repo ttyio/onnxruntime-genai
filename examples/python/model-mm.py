@@ -22,7 +22,9 @@ from common import (
     set_logger,
 )
 
-DEFAULT_USER_PROMPT = "What color is the sky?"
+DEFAULT_MULTIMODAL_PROMPT = "What color is the sky?"
+# Nemotron Parse bypasses chat templates and consumes these task-control tokens
+# directly to select bounding-box, class, and Markdown document outputs.
 DEFAULT_NEMOTRON_PARSE_PROMPT = (
     "</s><s><predict_bbox><predict_classes><output_markdown>"
 )
@@ -40,6 +42,16 @@ def main(args):
     config = get_config(args.model_path, args.execution_provider, args.ep_path)
     model = og.Model(config)
     is_nemotron_parse = model.type == "nemotron_parse"
+    default_user_prompt = (
+        DEFAULT_NEMOTRON_PARSE_PROMPT
+        if is_nemotron_parse
+        else DEFAULT_MULTIMODAL_PROMPT
+    )
+    user_prompt = (
+        args.user_prompt
+        if args.user_prompt is not None
+        else default_user_prompt
+    )
     if not hasattr(args, "max_length") and not is_nemotron_parse:
         args.max_length = 7680
     if args.verbose:
@@ -92,13 +104,7 @@ def main(args):
         audios, num_audios = get_user_audios(args.audio_paths, args.non_interactive)
 
         # Get user prompt
-        text = get_user_prompt(args.user_prompt, args.non_interactive)
-        if (
-            is_nemotron_parse
-            and args.non_interactive
-            and text == DEFAULT_USER_PROMPT
-        ):
-            text = DEFAULT_NEMOTRON_PARSE_PROMPT
+        text = get_user_prompt(user_prompt, args.non_interactive)
         if text == "quit()":
             break
         if is_nemotron_parse:
@@ -210,7 +216,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--debug', action='store_true', default=False, help='Dump input and output tensors with debug mode. Defaults to false')
     parser.add_argument('-g', '--timings', action='store_true', default=False, help='Print timing information for each generation step. Defaults to false')
     parser.add_argument('-sp', '--system_prompt', type=str, default='You are a helpful AI assistant.', help='System prompt to use for the model.')
-    parser.add_argument('-up', '--user_prompt', type=str, default=DEFAULT_USER_PROMPT, help='User prompt to use for the model.')
+    parser.add_argument('-up', '--user_prompt', type=str, default=None, help='User prompt to use for the model.')
     parser.add_argument("--image_paths", nargs="*", type=str, required=False, default=[], help="Paths to the images, mainly for CI usage")
     parser.add_argument("--audio_paths", nargs="*", type=str, required=False, default=[], help="Paths to the audios, mainly for CI usage")
     parser.add_argument("--non_interactive", action=argparse.BooleanOptionalAction, required=False, default=False, help="Non-interactive mode, mainly for CI usage")

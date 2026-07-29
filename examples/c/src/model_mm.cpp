@@ -16,7 +16,9 @@
 
 OgaGenerator* g_generator = nullptr;
 
-constexpr const char* kDefaultUserPrompt = "What color is the sky?";
+constexpr const char* kDefaultMultimodalPrompt = "What color is the sky?";
+// Nemotron Parse bypasses chat templates and consumes these task-control tokens
+// directly to select bounding-box, class, and Markdown document outputs.
 constexpr const char* kDefaultNemotronParsePrompt =
     "</s><s><predict_bbox><predict_classes><output_markdown>";
 
@@ -51,6 +53,11 @@ void CXX_API(
   auto model = OgaModel::Create(*config);
   const bool is_nemotron_parse =
       std::string(model->GetType()) == "nemotron_parse";
+  const std::string default_user_prompt =
+      is_nemotron_parse ? kDefaultNemotronParsePrompt
+                        : kDefaultMultimodalPrompt;
+  const std::string effective_user_prompt =
+      user_prompt.empty() ? default_user_prompt : user_prompt;
 
   if (verbose) std::cout << "Creating tokenizer..." << std::endl;
   auto tokenizer = OgaTokenizer::Create(*model);
@@ -94,10 +101,7 @@ void CXX_API(
     std::tie(audios, num_audios) = GetUserAudios(audio_paths, interactive);
 
     // Get user prompt
-    std::string text = GetUserPrompt(user_prompt, interactive);
-    if (is_nemotron_parse && !interactive && text == kDefaultUserPrompt) {
-      text = kDefaultNemotronParsePrompt;
-    }
+    std::string text = GetUserPrompt(effective_user_prompt, interactive);
     signal(SIGINT, TerminateGeneration);
     if (text == "quit()") {
       break;  // Exit the loop
@@ -208,7 +212,7 @@ int main(int argc, char** argv) {
   // Get command-line args
   GeneratorParamsArgs generator_params_args;
   GuidanceArgs guidance_args;
-  std::string model_path, ep = "follow_config", ep_path = "", system_prompt = "You are a helpful AI assistant.", user_prompt = "What color is the sky?";
+  std::string model_path, ep = "follow_config", ep_path = "", system_prompt = "You are a helpful AI assistant.", user_prompt;
   bool verbose = false, debug = false, interactive = true, rewind = true;
   std::vector<std::string> image_paths;
   std::vector<std::string> audio_paths;
@@ -227,7 +231,11 @@ int main(int argc, char** argv) {
   std::cout << "Execution provider: " << ep << std::endl;
   if (!ep_path.empty()) std::cout << "Execution provider path: " << ep_path << std::endl;
   std::cout << "System prompt: " << system_prompt << std::endl;
-  if (!interactive) std::cout << "User prompt: " << user_prompt << std::endl;
+  if (!interactive) {
+    std::cout << "User prompt: "
+              << (user_prompt.empty() ? "<model default>" : user_prompt)
+              << std::endl;
+  }
   std::cout << "Verbose: " << verbose << std::endl;
   std::cout << "Interactive: " << interactive << std::endl;
   std::cout << "--------------------------" << std::endl;

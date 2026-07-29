@@ -6,7 +6,9 @@ using Microsoft.ML.OnnxRuntimeGenAI;
 using System.CommandLine;
 using System.Text.Json;
 
-const string DefaultUserPrompt = "What color is the sky?";
+const string DefaultMultimodalPrompt = "What color is the sky?";
+// Nemotron Parse bypasses chat templates and consumes these task-control tokens
+// directly to select bounding-box, class, and Markdown document outputs.
 const string DefaultNemotronParsePrompt =
     "</s><s><predict_bbox><predict_classes><output_markdown>";
 
@@ -40,12 +42,14 @@ void ModelMM(
     List<string> audioPaths,
     string modelPath,
     string systemPrompt,
-    string userPrompt,
+    string? userPrompt,
     bool interactive,
     bool verbose
 )
 {
     bool isNemotronParse = model.GetModelType() == "nemotron_parse";
+    string effectiveUserPrompt = userPrompt ??
+        (isNemotronParse ? DefaultNemotronParsePrompt : DefaultMultimodalPrompt);
 
     // Creating running list of messages
     var system_message = new Dictionary<string, string>
@@ -87,11 +91,7 @@ void ModelMM(
         (audios, num_audios) = Common.GetUserAudios(audioPaths, interactive);
 
         // Get user prompt
-        string text = Common.GetUserPrompt(userPrompt, interactive);
-        if (isNemotronParse && !interactive && text == DefaultUserPrompt)
-        {
-            text = DefaultNemotronParsePrompt;
-        }
+        string text = Common.GetUserPrompt(effectiveUserPrompt, interactive);
         if (string.Compare(text, "quit()", StringComparison.OrdinalIgnoreCase) == 0)
         {
             break;
@@ -292,13 +292,12 @@ RootCommand GetArgs()
         Description = "System prompt to use for the model."
     };
 
-    var user_prompt = new Option<string>(
+    var user_prompt = new Option<string?>(
         name: "user_prompt",
         aliases: ["-up", "--user_prompt"]
     )
     {
         Arity = ArgumentArity.ExactlyOne,
-        DefaultValueFactory = (_) => "What color is the sky?",
         Description = "User prompt to use for the model."
     };
 
@@ -382,7 +381,7 @@ void main(string[] args) {
     string executionProvider = parseResult.GetValue<string>("execution_provider")!;
     string epPath = parseResult.GetValue<string>("ep_path")!;
     string systemPrompt = parseResult.GetValue<string>("system_prompt")!;
-    string userPrompt = parseResult.GetValue<string>("user_prompt")!;
+    string? userPrompt = parseResult.GetValue<string?>("user_prompt");
     bool verbose = parseResult.GetValue<bool>("verbose");
     bool debug = parseResult.GetValue<bool>("debug");
     bool interactive = !parseResult.GetValue<bool>("non_interactive");
@@ -406,7 +405,7 @@ void main(string[] args) {
     Console.WriteLine("System prompt: " + systemPrompt);
     if (!interactive)
     {
-        Console.WriteLine("User prompt: " + userPrompt);
+        Console.WriteLine("User prompt: " + (userPrompt ?? "<model default>"));
     }
     Console.WriteLine("Verbose: " + verbose);
     Console.WriteLine("Debug: " + debug);
