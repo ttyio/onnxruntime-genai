@@ -27,7 +27,91 @@ void SetProfile(OrtSessionOptions& session_options,
   session_options.AddConfigEntry(kProfileMaxShapes, max_shapes.c_str());
 }
 
-void ConfigureProfile(const Config& config, OrtSessionOptions& session_options, bool is_multi_profile_enabled) {
+void SetFixedProfile(OrtSessionOptions& session_options,
+                     const std::string& profile) {
+  SetProfile(session_options, profile, profile, profile);
+}
+
+void AppendProfileShape(std::ostringstream& profile, bool& first,
+                        const std::string& name,
+                        std::initializer_list<int64_t> dimensions) {
+  if (!first) {
+    profile << ',';
+  }
+  first = false;
+  profile << name << ':';
+  bool first_dimension = true;
+  for (int64_t dimension : dimensions) {
+    if (!first_dimension) {
+      profile << 'x';
+    }
+    first_dimension = false;
+    profile << dimension;
+  }
+}
+
+std::string MakeNemotronParsePrefillProfile(const Config& config) {
+  const auto& decoder = config.model.decoder;
+  std::ostringstream profile;
+  bool first = true;
+  AppendProfileShape(profile, first, decoder.inputs.input_ids,
+                     {1, decoder.prefill_sequence_length});
+  AppendProfileShape(profile, first, decoder.inputs.attention_mask,
+                     {1, decoder.prefill_sequence_length});
+  AppendProfileShape(profile, first, decoder.inputs.encoder_hidden_states,
+                     {1, config.model.vision.num_visual_tokens,
+                      decoder.hidden_size});
+  return profile.str();
+}
+
+std::string MakeNemotronParseDecodeProfile(const Config& config) {
+  const auto& decoder = config.model.decoder;
+  std::ostringstream profile;
+  bool first = true;
+  AppendProfileShape(profile, first, decoder.inputs.input_ids, {1, 1});
+  AppendProfileShape(profile, first, decoder.inputs.attention_mask,
+                     {1, config.model.context_length});
+
+  for (int layer = 0; layer < decoder.num_hidden_layers; ++layer) {
+    AppendProfileShape(profile, first,
+                       ComposeKeyValueName(decoder.inputs.past_key_names, layer),
+                       {1, decoder.num_key_value_heads,
+                        config.model.context_length, decoder.head_size});
+    AppendProfileShape(profile, first,
+                       ComposeKeyValueName(decoder.inputs.past_value_names, layer),
+                       {1, decoder.num_key_value_heads,
+                        config.model.context_length, decoder.head_size});
+    AppendProfileShape(
+        profile, first,
+        ComposeKeyValueName(decoder.inputs.cross_past_key_names, layer),
+        {1, decoder.num_key_value_heads,
+         config.model.vision.num_visual_tokens, decoder.head_size});
+    AppendProfileShape(
+        profile, first,
+        ComposeKeyValueName(decoder.inputs.cross_past_value_names, layer),
+        {1, decoder.num_key_value_heads,
+         config.model.vision.num_visual_tokens, decoder.head_size});
+  }
+
+  AppendProfileShape(profile, first, decoder.inputs.cache_write_indices, {1});
+  return profile.str();
+}
+
+void ConfigureProfile(const Config& config,
+                      OrtSessionOptions& session_options,
+                      bool is_multi_profile_enabled,
+                      bool disable_graph_capture) {
+  if (config.model.type == "nemotron_parse") {
+    // The primary session is decode. Nemotron Parse disables graph capture on
+    // its auxiliary encoder/prefill sessions; the encoder is fully static, so
+    // only the prefill graph consumes this auxiliary fixed profile.
+    SetFixedProfile(
+        session_options,
+        disable_graph_capture ? MakeNemotronParsePrefillProfile(config)
+                              : MakeNemotronParseDecodeProfile(config));
+    return;
+  }
+
   // Get model parameters from decoder config
   const int num_layers = config.model.decoder.num_hidden_layers;
   const int num_kv_heads = config.model.decoder.num_key_value_heads;
@@ -149,11 +233,6 @@ void ConfigureProfile(const Config& config, OrtSessionOptions& session_options, 
 
 }  // namespace
 
-void SetFixedProfile(OrtSessionOptions& session_options,
-                     const std::string& profile) {
-  SetProfile(session_options, profile, profile, profile);
-}
-
 DeviceInterface* AppendExecutionProvider(OrtSessionOptions& session_options,
                                          const Config::ProviderOptions& provider_options,
                                          const Config& config,
@@ -165,7 +244,8 @@ DeviceInterface* AppendExecutionProvider(OrtSessionOptions& session_options,
 
   // Configure NvTensorRT-specific settings (needed for both pre-registered and built-in paths)
   NvTensorRtRtxExecutionProvider::ConfigureProfile(config, session_options,
-                                                   IsMultiProfileEnabled(config.model.decoder.session_options));
+                                                   IsMultiProfileEnabled(config.model.decoder.session_options),
+                                                   disable_graph_capture);
   if (!disable_graph_capture &&
       IsGraphCaptureEnabled(config.model.decoder.session_options)) {
     session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.enable_cuda_graph", "1");
