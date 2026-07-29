@@ -76,10 +76,17 @@ struct InitAttentionMaskFunctor {
   }
 };
 
-DefaultPositionInputs::DefaultPositionInputs(const Model& model, State& state, DeviceSpan<int32_t> sequence_lengths_unk, const std::string& attention_mask_name)
+DefaultPositionInputs::DefaultPositionInputs(const Model& model, State& state, DeviceSpan<int32_t> sequence_lengths_unk,
+                                             const std::string& attention_mask_name,
+                                             AttentionMaskOptions attention_mask_options)
     : model_{model},
       state_{state},
-      attention_mask_name_{attention_mask_name} {
+      attention_mask_name_{attention_mask_name},
+      attention_mask_options_{attention_mask_options} {
+  if (attention_mask_options_.static_length < 0) {
+    throw std::runtime_error("attention mask static_length must not be negative");
+  }
+
   has_mask_input_ = model_.session_info_.HasInput(attention_mask_name_);
   has_posid_input_ = model_.session_info_.HasInput(model_.config_->model.decoder.inputs.position_ids);
 
@@ -223,29 +230,35 @@ void DefaultPositionInputs::UpdateAttentionMask(int total_length, int new_kv_len
   if (position_ids_shape_[0] != 1 && !(total_length == 0 || new_kv_length == 1))
     throw std::runtime_error("DefaultPositionInputs::UpdatePositionIDs - batch_size must be 1 for continuous decoding.");
 
+  const bool use_static_mask = ShouldUseStaticMaskHandling();
+  const int mask_capacity = GetAttentionMaskCapacity();
+  if (use_static_mask && total_length > mask_capacity) {
+    throw std::runtime_error("DefaultPositionInputs::UpdateAttentionMask - total_length exceeds the static mask capacity.");
+  }
+
   CreateNextAttentionMaskTensor(total_length);
 
   // Update the attention mask on the device. If it fails, copy to CPU, update there, and copy back to device.
-  if (!model_.p_device_inputs_->UpdateAttentionMask(ShouldUseStaticMaskHandling() ? nullptr : attention_mask_next_->GetMutableRawData(),
+  if (!model_.p_device_inputs_->UpdateAttentionMask(use_static_mask ? nullptr : attention_mask_next_->GetMutableRawData(),
                                                     attention_mask_->GetMutableRawData(),
                                                     static_cast<int>(attention_mask_shape_[0]),
                                                     new_kv_length,
                                                     total_length,
-                                                    state_.params_->search.max_length,
-                                                    ShouldUseStaticMaskHandling(),
+                                                    mask_capacity,
+                                                    use_static_mask,
                                                     type_)) {
     // auto* attention_mask_next_span = state_.params_->use_graph_capture ? &attention_mask_next_->GetByteSpan() : nullptr;
     DeviceSpan<uint8_t> attention_mask_next_span;
-    if (!ShouldUseStaticMaskHandling())
+    if (!use_static_mask)
       attention_mask_next_span = attention_mask_next_->GetByteSpan();
     auto attention_mask_span = attention_mask_->GetByteSpan();
-    GetDeviceInterface(DeviceType::CPU)->UpdateAttentionMask(ShouldUseStaticMaskHandling() ? nullptr : attention_mask_next_span.CopyDeviceToCpu().data(), attention_mask_span.CopyDeviceToCpu().data(), static_cast<int>(attention_mask_shape_[0]), new_kv_length, total_length, state_.params_->search.max_length, ShouldUseStaticMaskHandling(), type_);
-    if (!ShouldUseStaticMaskHandling())
+    GetDeviceInterface(DeviceType::CPU)->UpdateAttentionMask(use_static_mask ? nullptr : attention_mask_next_span.CopyDeviceToCpu().data(), attention_mask_span.CopyDeviceToCpu().data(), static_cast<int>(attention_mask_shape_[0]), new_kv_length, total_length, mask_capacity, use_static_mask, type_);
+    if (!use_static_mask)
       attention_mask_next_span.CopyCpuToDevice();
     attention_mask_span.CopyCpuToDevice();
   }
 
-  if (!ShouldUseStaticMaskHandling()) {
+  if (!use_static_mask) {
     attention_mask_->ort_tensor_ = std::move(attention_mask_next_->ort_tensor_);
     state_.inputs_[mask_input_index_] = attention_mask_->GetOrtTensor();
   }
@@ -305,7 +318,7 @@ template <typename T>
 void DefaultPositionInputs::InitializeStaticMask(OrtValue& cpu_attention_mask) {
   // Create static tensor of size max_length and expanded by num_beams
   attention_mask_shape_[0] *= state_.params_->search.num_beams;
-  attention_mask_shape_[1] = state_.params_->search.max_length;
+  attention_mask_shape_[1] = GetAttentionMaskCapacity();
   attention_mask_->CreateTensor(attention_mask_shape_, true);
   auto output_span = attention_mask_->GetDeviceSpan<T>();
   output_span.Zero();
@@ -315,6 +328,9 @@ void DefaultPositionInputs::InitializeStaticMask(OrtValue& cpu_attention_mask) {
   auto batch_size = input_shape[0];
   auto num_beams = state_.params_->search.num_beams;
   auto new_kv_length = input_shape[1];
+  if (new_kv_length > attention_mask_shape_[1]) {
+    throw std::runtime_error("DefaultPositionInputs::InitializeStaticMask - prompt exceeds the static mask capacity.");
+  }
   // Number of elements per (batch * beam) row in the *output* tensor
   // equals the full max_length configured for generation, which is
   // attention_mask_shape_[1] after the assignment above.
@@ -383,7 +399,7 @@ void DefaultPositionInputs::RewindMask(size_t index) {
   if (ShouldUseStaticMaskHandling()) {
     // Static mask layout: [batch_beam_size, max_length]
     // Rewind to index: write 1s for [0, index), 0s for [index, max_length)
-    size_t max_len = static_cast<size_t>(state_.params_->search.max_length);
+    size_t max_len = static_cast<size_t>(GetAttentionMaskCapacity());
     if (index > max_len) {
       throw std::runtime_error("RewindMask: index exceeds max_length");
     }
@@ -421,9 +437,23 @@ void DefaultPositionInputs::RewindMask(size_t index) {
 //   - CUDA with enable_cuda_graph=1 in provider options
 //   - NvTensorRtRtx with past-present shared buffers
 bool DefaultPositionInputs::ShouldUseStaticMaskHandling() const {
-  return state_.params_->use_graph_capture ||
-         (state_.params_->IsPastPresentShareBufferEnabled(model_.config_->model.type) &&
-          model_.p_device_->GetType() == DeviceType::NvTensorRtRtx);
+  switch (attention_mask_options_.mode) {
+    case AttentionMaskMode::Dynamic:
+      return false;
+    case AttentionMaskMode::Static:
+      return true;
+    case AttentionMaskMode::Automatic:
+      return state_.params_->use_graph_capture ||
+             (state_.params_->IsPastPresentShareBufferEnabled(model_.config_->model.type) &&
+              model_.p_device_->GetType() == DeviceType::NvTensorRtRtx);
+  }
+  throw std::runtime_error("Unknown attention mask mode");
+}
+
+int DefaultPositionInputs::GetAttentionMaskCapacity() const {
+  return attention_mask_options_.static_length > 0
+             ? attention_mask_options_.static_length
+             : state_.params_->search.max_length;
 }
 
 // TODO: SlidingWindow does not support graph capture

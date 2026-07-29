@@ -9,8 +9,22 @@ struct PositionInputs {
   virtual void RewindTo(size_t index) = 0;
 };
 
+enum class AttentionMaskMode {
+  Automatic,
+  Dynamic,
+  Static,
+};
+
+struct AttentionMaskOptions {
+  AttentionMaskMode mode{AttentionMaskMode::Automatic};
+  // A value of 0 uses the generation max_length for a static mask.
+  int static_length{};
+};
+
 struct DefaultPositionInputs : PositionInputs {
-  DefaultPositionInputs(const Model& model, State& state, DeviceSpan<int32_t> sequence_lengths_unk, const std::string& attention_mask_name);
+  DefaultPositionInputs(const Model& model, State& state, DeviceSpan<int32_t> sequence_lengths_unk,
+                        const std::string& attention_mask_name,
+                        AttentionMaskOptions attention_mask_options = {});
 
   void Add() override;
   void Update(DeviceSpan<int32_t> next_tokens, int total_length, int new_length) override;
@@ -43,10 +57,12 @@ struct DefaultPositionInputs : PositionInputs {
   // 2. Past-present buffer sharing is enabled AND the device is NvTensorRtRtx
   // Both scenarios require static mask allocation and special shape handling for optimization
   bool ShouldUseStaticMaskHandling() const;
+  int GetAttentionMaskCapacity() const;
 
   const Model& model_;
   State& state_;
   std::string attention_mask_name_;
+  AttentionMaskOptions attention_mask_options_;
 
   size_t mask_input_index_{~0U};
   size_t posid_input_index_{~0U};

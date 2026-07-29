@@ -6,6 +6,7 @@
 #include "input_ids.h"
 #include "kv_cache.h"
 #include "logits.h"
+#include "position_inputs.h"
 
 namespace Generators {
 namespace {
@@ -29,125 +30,6 @@ void ValidateTensorType(ONNXTensorElementDataType actual,
                              ", expected " + TypeToString(expected));
   }
 }
-
-class DynamicAttentionMask {
- public:
-  DynamicAttentionMask(State& state, const SessionInfo& session_info)
-      : state_{state},
-        name_{state.model_.config_->model.decoder.inputs.attention_mask},
-        type_{session_info.GetInputDataType(name_)},
-        value_{state.model_.p_device_inputs_, type_} {
-    if (type_ != Ort::TypeToTensorType<int32_t> &&
-        type_ != Ort::TypeToTensorType<int64_t>) {
-      throw std::runtime_error("Nemotron Parse attention mask must be int32 or int64");
-    }
-  }
-
-  void Add() {
-    input_index_ = state_.inputs_.size();
-    state_.input_names_.push_back(name_.c_str());
-    state_.inputs_.push_back(nullptr);
-  }
-
-  void Update(size_t sequence_length) {
-    const std::array<int64_t, 2> shape{
-        state_.params_->search.batch_size,
-        static_cast<int64_t>(sequence_length)};
-    value_.CreateTensor(shape);
-
-    auto cpu_value = OrtValue::CreateTensor(
-        state_.model_.allocator_cpu_, shape, type_);
-    if (type_ == Ort::TypeToTensorType<int32_t>) {
-      std::fill_n(cpu_value->GetTensorMutableData<int32_t>(),
-                  cpu_value->GetTensorTypeAndShapeInfo()->GetElementCount(), 1);
-    } else {
-      std::fill_n(cpu_value->GetTensorMutableData<int64_t>(),
-                  cpu_value->GetTensorTypeAndShapeInfo()->GetElementCount(), 1);
-    }
-
-    ByteWrapTensor(*state_.model_.p_device_inputs_, *value_.GetOrtTensor())
-        .CopyFrom(ByteWrapTensor(*GetDeviceInterface(DeviceType::CPU), *cpu_value));
-    state_.inputs_[input_index_] = value_.GetOrtTensor();
-  }
-
- private:
-  State& state_;
-  std::string name_;
-  ONNXTensorElementDataType type_;
-  Tensor value_;
-  size_t input_index_{~0U};
-};
-
-class StaticAttentionMask {
- public:
-  StaticAttentionMask(State& state, const SessionInfo& session_info)
-      : state_{state},
-        name_{state.model_.config_->model.decoder.inputs.attention_mask},
-        type_{session_info.GetInputDataType(name_)},
-        value_{state.model_.p_device_inputs_, type_} {
-    if (type_ != Ort::TypeToTensorType<int32_t> &&
-        type_ != Ort::TypeToTensorType<int64_t>) {
-      throw std::runtime_error("Nemotron Parse attention mask must be int32 or int64");
-    }
-
-    auto graph_shape = session_info.GetInputShape(name_);
-    if (graph_shape.size() != 2 || graph_shape[1] <= 0) {
-      throw std::runtime_error(
-          "Nemotron Parse decode attention mask must have a static sequence dimension");
-    }
-    cache_sequence_length_ = static_cast<int>(graph_shape[1]);
-
-    const std::array<int64_t, 2> shape{
-        state_.params_->BatchBeamSize(), cache_sequence_length_};
-    value_.CreateTensor(shape, true);
-    value_.GetByteSpan().Zero();
-  }
-
-  void Add() {
-    state_.input_names_.push_back(name_.c_str());
-    state_.inputs_.push_back(value_.GetOrtTensor());
-  }
-
-  void Initialize(size_t prompt_length) {
-    Activate(prompt_length, prompt_length);
-  }
-
-  void Update(size_t total_length, size_t new_length) {
-    Activate(total_length, new_length);
-  }
-
- private:
-  void Activate(size_t total_length, size_t new_length) {
-    if (new_length > total_length || total_length > static_cast<size_t>(cache_sequence_length_)) {
-      throw std::runtime_error("Nemotron Parse attention mask exceeds the fixed cache capacity");
-    }
-
-    if (state_.model_.p_device_inputs_->UpdateAttentionMask(
-            nullptr, value_.GetMutableRawData(), state_.params_->BatchBeamSize(),
-            static_cast<int>(new_length), static_cast<int>(total_length),
-            cache_sequence_length_, true, type_)) {
-      return;
-    }
-
-    auto bytes = value_.GetByteSpan();
-    auto cpu = bytes.CopyDeviceToCpu();
-    const size_t begin = total_length - new_length;
-    if (type_ == Ort::TypeToTensorType<int32_t>) {
-      auto* data = reinterpret_cast<int32_t*>(cpu.data());
-      std::fill(data + begin, data + total_length, 1);
-    } else {
-      auto* data = reinterpret_cast<int64_t*>(cpu.data());
-      std::fill(data + begin, data + total_length, 1);
-    }
-    bytes.CopyCpuToDevice();
-  }
-
-  State& state_;
-  std::string name_;
-  ONNXTensorElementDataType type_;
-  int cache_sequence_length_;
-  Tensor value_;
-};
 
 class CacheWriteIndices {
  public:
@@ -351,11 +233,16 @@ class PrefillState : public State {
     ContextCaches caches;
   };
 
-  PrefillState(const NemotronParseModel& model, const GeneratorParams& params)
+  PrefillState(const NemotronParseModel& model,
+               DeviceSpan<int32_t> sequence_lengths,
+               const GeneratorParams& params)
       : State{params, model},
         model_{model},
         input_ids_{*this},
-        attention_mask_{*this, model_.prefill_session_info_},
+        attention_mask_{
+            model, *this, sequence_lengths,
+            model.config_->model.decoder.inputs.attention_mask,
+            {AttentionMaskMode::Dynamic}},
         logits_{*this} {
     input_ids_.Add();
     attention_mask_.Add();
@@ -385,7 +272,8 @@ class PrefillState : public State {
   Result RunPrefill(DeviceSpan<int32_t>& tokens, OrtValue& encoder_hidden_states) {
     const size_t sequence_length = tokens.size() / params_->search.batch_size;
     input_ids_.Update(tokens);
-    attention_mask_.Update(sequence_length);
+    attention_mask_.Update(tokens, static_cast<int>(sequence_length),
+                           static_cast<int>(sequence_length));
     inputs_[encoder_hidden_states_input_index_] = &encoder_hidden_states;
     logits_.Update(tokens, sequence_length);
     if (model_.config_->model.decoder.run_options.has_value()) {
@@ -428,7 +316,7 @@ class PrefillState : public State {
 
   const NemotronParseModel& model_;
   DefaultInputIDs input_ids_;
-  DynamicAttentionMask attention_mask_;
+  DefaultPositionInputs attention_mask_;
   Logits logits_;
   size_t encoder_hidden_states_input_index_{~0U};
   std::vector<std::string> cache_output_names_;
@@ -438,11 +326,16 @@ class PrefillState : public State {
 
 class DecodeState : public State {
  public:
-  DecodeState(const NemotronParseModel& model, const GeneratorParams& params)
+  DecodeState(const NemotronParseModel& model,
+              DeviceSpan<int32_t> sequence_lengths,
+              const GeneratorParams& params)
       : State{params, model},
         model_{model},
         input_ids_{*this},
-        attention_mask_{*this, model_.decoder_session_info_},
+        attention_mask_{
+            model, *this, sequence_lengths,
+            model.config_->model.decoder.inputs.attention_mask,
+            {AttentionMaskMode::Static, model.config_->model.context_length}},
         write_indices_{*this, model_.decoder_session_info_},
         self_cache_{*this, model_.decoder_session_info_},
         logits_{*this} {
@@ -469,6 +362,7 @@ class DecodeState : public State {
   }
 
   void Initialize(size_t prompt_length,
+                  DeviceSpan<int32_t> prompt_tokens,
                   std::unique_ptr<OrtValue> encoder_hidden_states,
                   ContextCaches caches) {
     self_cache_.Initialize(caches.self);
@@ -522,7 +416,8 @@ class DecodeState : public State {
       encoder_hidden_states_ = std::move(encoder_hidden_states);
       inputs_[encoder_hidden_states_input_index_] = encoder_hidden_states_.get();
     }
-    attention_mask_.Initialize(prompt_length);
+    attention_mask_.Update(prompt_tokens, static_cast<int>(prompt_length),
+                           static_cast<int>(prompt_length));
   }
 
   DeviceSpan<float> Run(int total_length, DeviceSpan<int32_t>& next_tokens,
@@ -538,7 +433,8 @@ class DecodeState : public State {
     }
 
     input_ids_.Update(next_tokens);
-    attention_mask_.Update(total_length, new_length);
+    attention_mask_.Update(next_tokens, total_length,
+                           static_cast<int>(new_length));
     write_indices_.Update(static_cast<size_t>(total_length) - new_length);
     logits_.Update(next_tokens, new_length);
     if (model_.config_->model.decoder.run_options.has_value()) {
@@ -561,7 +457,7 @@ class DecodeState : public State {
 
   const NemotronParseModel& model_;
   DefaultInputIDs input_ids_;
-  StaticAttentionMask attention_mask_;
+  DefaultPositionInputs attention_mask_;
   CacheWriteIndices write_indices_;
   TensorScatterKeyValueCache self_cache_;
   Logits logits_;
@@ -576,12 +472,14 @@ class DecodeState : public State {
 class NemotronParseState : public State {
  public:
   NemotronParseState(const NemotronParseModel& model,
+                     DeviceSpan<int32_t> sequence_lengths,
                      const GeneratorParams& params)
       : State{params, model},
         model_{model},
         encoder_state_{std::make_unique<EncoderState>(model, params)},
-        prefill_state_{std::make_unique<PrefillState>(model, params)},
-        decode_state_{model, params} {
+        prefill_state_{
+            std::make_unique<PrefillState>(model, sequence_lengths, params)},
+        decode_state_{model, sequence_lengths, params} {
     if (params_->search.batch_size != 1 || params_->search.num_beams != 1) {
       throw std::runtime_error(
           "Nemotron Parse native TensorScatter currently supports batch_size=1 and num_beams=1");
@@ -614,6 +512,7 @@ class NemotronParseState : public State {
       auto encoder_hidden_states = encoder_state_->RunEncoder();
       auto prefill = prefill_state_->RunPrefill(next_tokens, *encoder_hidden_states);
       decode_state_.Initialize(static_cast<size_t>(total_length),
+                               next_tokens,
                                std::move(encoder_hidden_states),
                                std::move(prefill.caches));
       encoder_state_.reset();
@@ -716,8 +615,8 @@ NemotronParseModel::NemotronParseModel(std::unique_ptr<Config> config,
 }
 
 std::unique_ptr<State> NemotronParseModel::CreateState(
-    DeviceSpan<int32_t>, const GeneratorParams& params) const {
-  return std::make_unique<NemotronParseState>(*this, params);
+    DeviceSpan<int32_t> sequence_lengths, const GeneratorParams& params) const {
+  return std::make_unique<NemotronParseState>(*this, sequence_lengths, params);
 }
 
 }  // namespace Generators
