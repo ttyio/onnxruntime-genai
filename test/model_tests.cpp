@@ -36,6 +36,7 @@ TEST(ModelTests, NemotronParseConfig) {
 
   EXPECT_EQ(config.model.type, "nemotron_parse");
   EXPECT_EQ(config.model.context_length, 1032);
+  EXPECT_TRUE(Generators::ModelType::IsVLM(config.model.type));
   EXPECT_EQ(config.model.vision.num_visual_tokens, 3201);
   EXPECT_EQ(config.model.vision.outputs.image_features,
             "encoder_hidden_states");
