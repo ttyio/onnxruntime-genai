@@ -31,154 +31,6 @@ void ValidateTensorType(ONNXTensorElementDataType actual,
   }
 }
 
-class CacheWriteIndices {
- public:
-  CacheWriteIndices(State& state, const SessionInfo& session_info)
-      : state_{state},
-        name_{state.model_.config_->model.decoder.inputs.cache_write_indices},
-        type_{session_info.GetInputDataType(name_)},
-        value_{state.model_.p_device_inputs_, type_} {
-    if (type_ != Ort::TypeToTensorType<int32_t> &&
-        type_ != Ort::TypeToTensorType<int64_t>) {
-      throw std::runtime_error("Nemotron Parse cache_write_indices must be int32 or int64");
-    }
-    const std::array<int64_t, 1> shape{state_.params_->BatchBeamSize()};
-    value_.CreateTensor(shape, true);
-  }
-
-  void Add() {
-    state_.input_names_.push_back(name_.c_str());
-    state_.inputs_.push_back(value_.GetOrtTensor());
-  }
-
-  void Update(size_t index) {
-    if (type_ == Ort::TypeToTensorType<int32_t>) {
-      auto values = value_.GetDeviceSpan<int32_t>();
-      auto cpu_values = values.CpuSpan();
-      std::fill(cpu_values.begin(), cpu_values.end(), static_cast<int32_t>(index));
-      values.CopyCpuToDevice();
-    } else {
-      auto values = value_.GetDeviceSpan<int64_t>();
-      auto cpu_values = values.CpuSpan();
-      std::fill(cpu_values.begin(), cpu_values.end(), static_cast<int64_t>(index));
-      values.CopyCpuToDevice();
-    }
-  }
-
- private:
-  State& state_;
-  std::string name_;
-  ONNXTensorElementDataType type_;
-  Tensor value_;
-};
-
-class TensorScatterKeyValueCache {
- public:
-  TensorScatterKeyValueCache(State& state, const SessionInfo& session_info)
-      : state_{state},
-        layer_count_{state.model_.config_->model.decoder.num_hidden_layers} {
-    const auto& config = state_.model_.config_->model.decoder;
-    input_names_.reserve(layer_count_ * 2);
-    output_names_.reserve(layer_count_ * 2);
-    values_.reserve(layer_count_ * 2);
-
-    for (int layer = 0; layer < layer_count_; ++layer) {
-      input_names_.push_back(ComposeKeyValueName(config.inputs.past_key_names, layer));
-      input_names_.push_back(ComposeKeyValueName(config.inputs.past_value_names, layer));
-      output_names_.push_back(ComposeKeyValueName(config.outputs.present_key_names, layer));
-      output_names_.push_back(ComposeKeyValueName(config.outputs.present_value_names, layer));
-    }
-
-    for (size_t i = 0; i < input_names_.size(); ++i) {
-      const auto& input_name = input_names_[i];
-      const auto& output_name = output_names_[i];
-      if (!session_info.HasInput(input_name) || !session_info.HasOutput(output_name)) {
-        throw std::runtime_error("Nemotron Parse decode graph is missing cache pair " +
-                                 input_name + " -> " + output_name);
-      }
-
-      auto shape = session_info.GetInputShape(input_name);
-      auto output_shape = session_info.GetOutputShape(output_name);
-      if (shape.size() != 4 || output_shape.size() != 4) {
-        throw std::runtime_error("Nemotron Parse self KV cache must be rank 4");
-      }
-      shape[0] = state_.params_->BatchBeamSize();
-      if (shape[1] <= 0 || shape[2] <= 0 || shape[3] <= 0) {
-        throw std::runtime_error("Nemotron Parse self KV cache has an invalid fixed shape");
-      }
-      if (cache_sequence_length_ == 0) {
-        cache_sequence_length_ = static_cast<int>(shape[2]);
-      } else if (shape[2] != cache_sequence_length_) {
-        throw std::runtime_error(
-            "Nemotron Parse self KV caches have inconsistent sequence dimensions");
-      }
-      for (size_t axis = 1; axis < shape.size(); ++axis) {
-        if (output_shape[axis] > 0 && output_shape[axis] != shape[axis]) {
-          throw std::runtime_error("Nemotron Parse past/present KV cache shapes differ");
-        }
-      }
-
-      const auto type = session_info.GetInputDataType(input_name);
-      ValidateTensorType(session_info.GetOutputDataType(output_name), type, output_name);
-      values_.push_back(OrtValue::CreateTensor(
-          state_.model_.p_device_kvcache_->GetAllocator(), shape, type));
-      ByteWrapTensor(*state_.model_.p_device_kvcache_, *values_.back()).Zero();
-    }
-  }
-
-  void Add() {
-    for (size_t i = 0; i < values_.size(); ++i) {
-      state_.input_names_.push_back(input_names_[i].c_str());
-      state_.inputs_.push_back(values_[i].get());
-      state_.output_names_.push_back(output_names_[i].c_str());
-      state_.outputs_.push_back(values_[i].get());
-    }
-  }
-
-  void Initialize(const std::vector<std::unique_ptr<OrtValue>>& compact_values) {
-    if (compact_values.size() != values_.size()) {
-      throw std::runtime_error("Nemotron Parse prefill returned an unexpected self-cache count");
-    }
-
-    for (size_t i = 0; i < values_.size(); ++i) {
-      auto source_info = compact_values[i]->GetTensorTypeAndShapeInfo();
-      auto target_info = values_[i]->GetTensorTypeAndShapeInfo();
-      auto source_shape = source_info->GetShape();
-      auto target_shape = target_info->GetShape();
-      if (source_shape.size() != 4 || source_shape[0] != target_shape[0] ||
-          source_shape[1] != target_shape[1] || source_shape[3] != target_shape[3] ||
-          source_shape[2] > target_shape[2]) {
-        throw std::runtime_error("Nemotron Parse prefill self cache does not fit the decode cache");
-      }
-      ValidateTensorType(source_info->GetElementType(), target_info->GetElementType(),
-                         input_names_[i]);
-
-      const size_t row_bytes = static_cast<size_t>(source_shape[2] * source_shape[3]) *
-                               Ort::SizeOf(source_info->GetElementType());
-      const size_t source_stride = row_bytes;
-      const size_t target_stride = static_cast<size_t>(target_shape[2] * target_shape[3]) *
-                                   Ort::SizeOf(target_info->GetElementType());
-      auto& cache_device = *state_.model_.p_device_kvcache_;
-      auto source = ByteWrapTensor(DeviceFor(*compact_values[i], cache_device),
-                                   *compact_values[i]);
-      auto target = ByteWrapTensor(cache_device, *values_[i]);
-      const size_t rows = static_cast<size_t>(source_shape[0] * source_shape[1]);
-      for (size_t row = 0; row < rows; ++row) {
-        target.subspan(row * target_stride, row_bytes)
-            .CopyFrom(source.subspan(row * source_stride, row_bytes));
-      }
-    }
-  }
-
- private:
-  State& state_;
-  int cache_sequence_length_{};
-  int layer_count_;
-  std::vector<std::string> input_names_;
-  std::vector<std::string> output_names_;
-  std::vector<std::unique_ptr<OrtValue>> values_;
-};
-
 class EncoderState : public State {
  public:
   EncoderState(const NemotronParseModel& model, const GeneratorParams& params)
@@ -336,12 +188,10 @@ class DecodeState : public State {
             model, *this, sequence_lengths,
             model.config_->model.decoder.inputs.attention_mask,
             {AttentionMaskMode::Static, model.config_->model.context_length}},
-        write_indices_{*this, model_.decoder_session_info_},
-        self_cache_{*this, model_.decoder_session_info_},
+        self_cache_{*this},
         logits_{*this} {
     input_ids_.Add();
     attention_mask_.Add();
-    write_indices_.Add();
 
     const auto& decoder = model_.config_->model.decoder;
     if (model_.decoder_session_info_.HasInput(decoder.inputs.encoder_hidden_states)) {
@@ -435,7 +285,7 @@ class DecodeState : public State {
     input_ids_.Update(next_tokens);
     attention_mask_.Update(next_tokens, total_length,
                            static_cast<int>(new_length));
-    write_indices_.Update(static_cast<size_t>(total_length) - new_length);
+    self_cache_.Update({}, total_length);
     logits_.Update(next_tokens, new_length);
     if (model_.config_->model.decoder.run_options.has_value()) {
       State::SetRunOptions(*model_.config_->model.decoder.run_options);
@@ -458,7 +308,6 @@ class DecodeState : public State {
   const NemotronParseModel& model_;
   DefaultInputIDs input_ids_;
   DefaultPositionInputs attention_mask_;
-  CacheWriteIndices write_indices_;
   TensorScatterKeyValueCache self_cache_;
   Logits logits_;
 
