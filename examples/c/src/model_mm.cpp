@@ -16,6 +16,10 @@
 
 OgaGenerator* g_generator = nullptr;
 
+constexpr const char* kDefaultUserPrompt = "What color is the sky?";
+constexpr const char* kDefaultNemotronParsePrompt =
+    "</s><s><predict_bbox><predict_classes><output_markdown>";
+
 void TerminateGeneration(int signum) {
   if (g_generator == nullptr) {
     return;
@@ -45,6 +49,8 @@ void CXX_API(
 
   if (verbose) std::cout << "Creating model..." << std::endl;
   auto model = OgaModel::Create(*config);
+  const bool is_nemotron_parse =
+      std::string(model->GetType()) == "nemotron_parse";
 
   if (verbose) std::cout << "Creating tokenizer..." << std::endl;
   auto tokenizer = OgaTokenizer::Create(*model);
@@ -89,9 +95,20 @@ void CXX_API(
 
     // Get user prompt
     std::string text = GetUserPrompt(user_prompt, interactive);
+    if (is_nemotron_parse && !interactive && text == kDefaultUserPrompt) {
+      text = kDefaultNemotronParsePrompt;
+    }
     signal(SIGINT, TerminateGeneration);
     if (text == "quit()") {
       break;  // Exit the loop
+    }
+    if (is_nemotron_parse) {
+      if (num_images != 1) {
+        throw std::runtime_error("Nemotron Parse requires exactly one image");
+      }
+      if (num_audios != 0) {
+        throw std::runtime_error("Nemotron Parse does not accept audio input");
+      }
     }
 
     // Construct user content based on inputs
@@ -132,11 +149,16 @@ void CXX_API(
 
     // Apply chat template
     std::string prompt;
-    try {
-      bool add_generation_prompt = true;
-      prompt = ApplyChatTemplate(model_path, *tokenizer, messages, add_generation_prompt, tools);
-    } catch (...) {
+    if (is_nemotron_parse) {
       prompt = text;
+    } else {
+      try {
+        bool add_generation_prompt = true;
+        prompt = ApplyChatTemplate(model_path, *tokenizer, messages,
+                                   add_generation_prompt, tools);
+      } catch (...) {
+        prompt = text;
+      }
     }
     if (verbose) std::cout << "Prompt: " << prompt << "\n"
                            << std::endl;

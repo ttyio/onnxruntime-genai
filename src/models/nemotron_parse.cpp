@@ -367,10 +367,10 @@ class NemotronParseState : public State {
           total_length > model_.config_->model.context_length) {
         throw std::runtime_error("Nemotron Parse prompt exceeds the cache capacity");
       }
-      if (model_.p_device_->GetType() == DeviceType::NvTensorRtRtx &&
-          total_length != model_.config_->model.decoder.prefill_sequence_length) {
+      if (total_length !=
+          model_.config_->model.decoder.prefill_sequence_length) {
         throw std::runtime_error(
-            "Nemotron Parse TRT-RTX prompt length must match prefill_sequence_length");
+            "Nemotron Parse prompt length must match prefill_sequence_length");
       }
       auto encoder_hidden_states = encoder_state_->RunEncoder();
       auto prefill = prefill_state_->RunPrefill(next_tokens, *encoder_hidden_states);
@@ -412,7 +412,7 @@ NemotronParseModel::NemotronParseModel(std::unique_ptr<Config> config,
   if (config_->model.vision.filename.empty() || decoder.filename.empty() ||
       decoder.prefill_filename.empty() || config_->model.context_length <= 0 ||
       decoder.prefill_sequence_length <= 0 ||
-      decoder.prefill_sequence_length > config_->model.context_length ||
+      decoder.prefill_sequence_length >= config_->model.context_length ||
       decoder.hidden_size <= 0 || decoder.num_hidden_layers <= 0 ||
       decoder.num_key_value_heads <= 0 || decoder.head_size <= 0 ||
       decoder.inputs.cache_write_indices.empty() ||

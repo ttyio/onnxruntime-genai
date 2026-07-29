@@ -254,6 +254,12 @@ python -m onnxruntime_genai.models.builder -i path_to_nemotron_parse_model -o pa
 python builder.py -i path_to_nemotron_parse_model -o path_to_output_folder -p int4 -e NvTensorRtRtx --extra_options hf_remote=true image_height=2048 image_width=1648 prefill_sequence_length=8 cache_sequence_length=1032 export_components=encoder,decoder decoder_cache_mode=tensor_scatter export_device=cuda use_qdq=true block_size=32
 ```
 
+Run the exported package through the shared multimodal example:
+
+```bash
+python examples/python/model-mm.py -m path_to_output_folder --image_paths document.png --non_interactive
+```
+
 #### Exclude Embedding Layer
 
 This scenario is for when you want to exclude the embedding layer from your ONNX model.

@@ -24,6 +24,7 @@
 #include "parakeet_processor.h"
 #include "nemotron_speech.h"
 #include "nemotron_parse.h"
+#include "nemotron_parse_processor.h"
 #include "multi_modal.h"
 #include "lfm2.h"
 #include "marian.h"
@@ -1011,6 +1012,7 @@ MultiModalProcessor::MultiModalProcessor(Config& config, const SessionInfo& sess
           {"qwen3_vl", Processor::Create<QwenImageProcessor>},
           {"qwen3_5", Processor::Create<QwenImageProcessor>},
           {"qwen3_5_moe", Processor::Create<QwenImageProcessor>},
+          {"nemotron_parse", Processor::Create<NemotronParseProcessor>},
           {"videochat_flash_qwen", Processor::Create<VideoChatFlashProcessor>}} {
   auto processor = processor_factory_.find(config.model.type);
   if (processor != processor_factory_.end()) {

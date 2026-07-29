@@ -22,6 +22,11 @@ from common import (
     set_logger,
 )
 
+DEFAULT_USER_PROMPT = "What color is the sky?"
+DEFAULT_NEMOTRON_PARSE_PROMPT = (
+    "</s><s><predict_bbox><predict_classes><output_markdown>"
+)
+
 
 def main(args):
     if args.debug:
@@ -34,6 +39,9 @@ def main(args):
     # Create model
     config = get_config(args.model_path, args.execution_provider, args.ep_path)
     model = og.Model(config)
+    is_nemotron_parse = model.type == "nemotron_parse"
+    if not hasattr(args, "max_length") and not is_nemotron_parse:
+        args.max_length = 7680
     if args.verbose:
         print("Model loaded")
 
@@ -85,8 +93,19 @@ def main(args):
 
         # Get user prompt
         text = get_user_prompt(args.user_prompt, args.non_interactive)
+        if (
+            is_nemotron_parse
+            and args.non_interactive
+            and text == DEFAULT_USER_PROMPT
+        ):
+            text = DEFAULT_NEMOTRON_PARSE_PROMPT
         if text == "quit()":
             break
+        if is_nemotron_parse:
+            if num_images != 1:
+                raise ValueError("Nemotron Parse requires exactly one image")
+            if num_audios:
+                raise ValueError("Nemotron Parse does not accept audio input")
 
         # Construct user content based on inputs
         user_content = get_user_content(model.type, num_images, num_audios, text)
@@ -119,12 +138,15 @@ def main(args):
             print("Generator created")
 
         # Apply chat template
-        try:
-            prompt = apply_chat_template(model_path=args.model_path, tokenizer=tokenizer, messages=messages, tools=tools, add_generation_prompt=True)
-        except Exception as e:
-            if args.verbose:
-                print(f"Exception in apply_chat_template: {e}")
+        if is_nemotron_parse:
             prompt = text
+        else:
+            try:
+                prompt = apply_chat_template(model_path=args.model_path, tokenizer=tokenizer, messages=messages, tools=tools, add_generation_prompt=True)
+            except Exception as e:
+                if args.verbose:
+                    print(f"Exception in apply_chat_template: {e}")
+                prompt = text
         if args.verbose:
             print(f"Prompt: {prompt}")
 
@@ -188,7 +210,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--debug', action='store_true', default=False, help='Dump input and output tensors with debug mode. Defaults to false')
     parser.add_argument('-g', '--timings', action='store_true', default=False, help='Print timing information for each generation step. Defaults to false')
     parser.add_argument('-sp', '--system_prompt', type=str, default='You are a helpful AI assistant.', help='System prompt to use for the model.')
-    parser.add_argument('-up', '--user_prompt', type=str, default='What color is the sky?', help='User prompt to use for the model.')
+    parser.add_argument('-up', '--user_prompt', type=str, default=DEFAULT_USER_PROMPT, help='User prompt to use for the model.')
     parser.add_argument("--image_paths", nargs="*", type=str, required=False, default=[], help="Paths to the images, mainly for CI usage")
     parser.add_argument("--audio_paths", nargs="*", type=str, required=False, default=[], help="Paths to the audios, mainly for CI usage")
     parser.add_argument("--non_interactive", action=argparse.BooleanOptionalAction, required=False, default=False, help="Non-interactive mode, mainly for CI usage")
@@ -198,5 +220,4 @@ if __name__ == "__main__":
     get_guidance_args(parser)
 
     args = parser.parse_args()
-    args.max_length = args.max_length if hasattr(args, "max_length") else 7680
     main(args)

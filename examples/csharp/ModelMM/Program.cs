@@ -6,6 +6,10 @@ using Microsoft.ML.OnnxRuntimeGenAI;
 using System.CommandLine;
 using System.Text.Json;
 
+const string DefaultUserPrompt = "What color is the sky?";
+const string DefaultNemotronParsePrompt =
+    "</s><s><predict_bbox><predict_classes><output_markdown>";
+
 /// <summary>
 /// Example of model-mm
 /// </summary>
@@ -41,6 +45,8 @@ void ModelMM(
     bool verbose
 )
 {
+    bool isNemotronParse = model.GetModelType() == "nemotron_parse";
+
     // Creating running list of messages
     var system_message = new Dictionary<string, string>
     {
@@ -82,9 +88,24 @@ void ModelMM(
 
         // Get user prompt
         string text = Common.GetUserPrompt(userPrompt, interactive);
+        if (isNemotronParse && !interactive && text == DefaultUserPrompt)
+        {
+            text = DefaultNemotronParsePrompt;
+        }
         if (string.Compare(text, "quit()", StringComparison.OrdinalIgnoreCase) == 0)
         {
             break;
+        }
+        if (isNemotronParse)
+        {
+            if (num_images != 1)
+            {
+                throw new ArgumentException("Nemotron Parse requires exactly one image");
+            }
+            if (num_audios != 0)
+            {
+                throw new ArgumentException("Nemotron Parse does not accept audio input");
+            }
         }
 
         // Construct user content based on inputs
@@ -120,15 +141,22 @@ void ModelMM(
         if (verbose) Console.WriteLine("Generator created");
 
         // Apply chat template
-        string prompt = "";
-        try
-        {
-            string messages = JsonSerializer.Serialize(input_list);
-            prompt = Common.ApplyChatTemplate(modelPath, tokenizer, messages, add_generation_prompt: true, tools);
-        }
-        catch
+        string prompt;
+        if (isNemotronParse)
         {
             prompt = text;
+        }
+        else
+        {
+            try
+            {
+                string messages = JsonSerializer.Serialize(input_list);
+                prompt = Common.ApplyChatTemplate(modelPath, tokenizer, messages, add_generation_prompt: true, tools);
+            }
+            catch
+            {
+                prompt = text;
+            }
         }
         if (verbose) Console.WriteLine($"Prompt: {prompt}");
 
