@@ -11,27 +11,6 @@ namespace Generators::NvTensorRtRtxExecutionProvider {
 
 namespace {
 
-constexpr const char* kProfileMinShapes =
-    "ep.nvtensorrtrtxexecutionprovider.nv_profile_min_shapes";
-constexpr const char* kProfileOptShapes =
-    "ep.nvtensorrtrtxexecutionprovider.nv_profile_opt_shapes";
-constexpr const char* kProfileMaxShapes =
-    "ep.nvtensorrtrtxexecutionprovider.nv_profile_max_shapes";
-
-void SetProfile(OrtSessionOptions& session_options,
-                const std::string& min_shapes,
-                const std::string& opt_shapes,
-                const std::string& max_shapes) {
-  session_options.AddConfigEntry(kProfileMinShapes, min_shapes.c_str());
-  session_options.AddConfigEntry(kProfileOptShapes, opt_shapes.c_str());
-  session_options.AddConfigEntry(kProfileMaxShapes, max_shapes.c_str());
-}
-
-void SetFixedProfile(OrtSessionOptions& session_options,
-                     const std::string& profile) {
-  SetProfile(session_options, profile, profile, profile);
-}
-
 void AppendProfileShape(std::ostringstream& profile, bool& first,
                         const std::string& name,
                         std::initializer_list<int64_t> dimensions) {
@@ -105,10 +84,12 @@ void ConfigureProfile(const Config& config,
     // The primary session is decode. Nemotron Parse disables graph capture on
     // its auxiliary encoder/prefill sessions; the encoder is fully static, so
     // only the prefill graph consumes this auxiliary fixed profile.
-    SetFixedProfile(
-        session_options,
+    const std::string profile =
         disable_graph_capture ? MakeNemotronParsePrefillProfile(config)
-                              : MakeNemotronParseDecodeProfile(config));
+                              : MakeNemotronParseDecodeProfile(config);
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_min_shapes", profile.c_str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_opt_shapes", profile.c_str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_max_shapes", profile.c_str());
     return;
   }
 
@@ -201,7 +182,9 @@ void ConfigureProfile(const Config& config,
     add_key_value_cache_shapes(max_shapes, batch_size, past_key_pattern, past_value_pattern, max_context_len - 1, num_layers, num_kv_heads, head_dim);
 
     // Add the constructed profiles to session options
-    SetProfile(session_options, min_shapes.str(), opt_shapes.str(), max_shapes.str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_min_shapes", min_shapes.str().c_str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_opt_shapes", opt_shapes.str().c_str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_max_shapes", max_shapes.str().c_str());
   } else {
     // Single profile mode: simple shapes with batch_dim=[1,1,batch_size] and seq_dim=[1,1024,max_context_len]
     std::ostringstream min_shapes, opt_shapes, max_shapes;
@@ -227,7 +210,9 @@ void ConfigureProfile(const Config& config,
     add_key_value_cache_shapes(max_shapes, batch_size, past_key_pattern, past_value_pattern, max_context_len, num_layers, num_kv_heads, head_dim);
 
     // Add the constructed profiles to session options
-    SetProfile(session_options, min_shapes.str(), opt_shapes.str(), max_shapes.str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_min_shapes", min_shapes.str().c_str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_opt_shapes", opt_shapes.str().c_str());
+    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_max_shapes", max_shapes.str().c_str());
   }
 }
 
