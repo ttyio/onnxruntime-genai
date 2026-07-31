@@ -11,6 +11,85 @@
 namespace Generators {
 namespace {
 
+constexpr const char* kNvProfileMinShapes =
+    "ep.nvtensorrtrtxexecutionprovider.nv_profile_min_shapes";
+constexpr const char* kNvProfileOptShapes =
+    "ep.nvtensorrtrtxexecutionprovider.nv_profile_opt_shapes";
+constexpr const char* kNvProfileMaxShapes =
+    "ep.nvtensorrtrtxexecutionprovider.nv_profile_max_shapes";
+
+void AppendProfileShape(std::ostringstream& profile, bool& first,
+                        const std::string& name,
+                        std::initializer_list<int64_t> dimensions) {
+  if (!first) {
+    profile << ',';
+  }
+  first = false;
+  profile << name << ':';
+  bool first_dimension = true;
+  for (int64_t dimension : dimensions) {
+    if (!first_dimension) {
+      profile << 'x';
+    }
+    first_dimension = false;
+    profile << dimension;
+  }
+}
+
+void SetFixedProfile(OrtSessionOptions& session_options,
+                     const std::string& profile) {
+  session_options.AddConfigEntry(kNvProfileMinShapes, profile.c_str());
+  session_options.AddConfigEntry(kNvProfileOptShapes, profile.c_str());
+  session_options.AddConfigEntry(kNvProfileMaxShapes, profile.c_str());
+}
+
+std::string MakePrefillProfile(const Config& config) {
+  const auto& decoder = config.model.decoder;
+  std::ostringstream profile;
+  bool first = true;
+  AppendProfileShape(profile, first, decoder.inputs.input_ids,
+                     {1, decoder.prefill_sequence_length});
+  AppendProfileShape(profile, first, decoder.inputs.attention_mask,
+                     {1, decoder.prefill_sequence_length});
+  AppendProfileShape(profile, first, decoder.inputs.encoder_hidden_states,
+                     {1, config.model.vision.num_visual_tokens,
+                      decoder.hidden_size});
+  return profile.str();
+}
+
+std::string MakeDecodeProfile(const Config& config) {
+  const auto& decoder = config.model.decoder;
+  std::ostringstream profile;
+  bool first = true;
+  AppendProfileShape(profile, first, decoder.inputs.input_ids, {1, 1});
+  AppendProfileShape(profile, first, decoder.inputs.attention_mask,
+                     {1, config.model.context_length});
+
+  for (int layer = 0; layer < decoder.num_hidden_layers; ++layer) {
+    AppendProfileShape(profile, first,
+                       ComposeKeyValueName(decoder.inputs.past_key_names, layer),
+                       {1, decoder.num_key_value_heads,
+                        config.model.context_length, decoder.head_size});
+    AppendProfileShape(profile, first,
+                       ComposeKeyValueName(decoder.inputs.past_value_names, layer),
+                       {1, decoder.num_key_value_heads,
+                        config.model.context_length, decoder.head_size});
+    AppendProfileShape(
+        profile, first,
+        ComposeKeyValueName(decoder.inputs.cross_past_key_names, layer),
+        {1, decoder.num_key_value_heads,
+         config.model.vision.num_visual_tokens, decoder.head_size});
+    AppendProfileShape(
+        profile, first,
+        ComposeKeyValueName(decoder.inputs.cross_past_value_names, layer),
+        {1, decoder.num_key_value_heads,
+         config.model.vision.num_visual_tokens, decoder.head_size});
+  }
+
+  AppendProfileShape(profile, first, decoder.inputs.cache_write_indices, {1});
+  return profile.str();
+}
+
 DeviceInterface& DeviceFor(const OrtValue& value, DeviceInterface& model_device) {
   const bool on_cpu =
       value.GetTensorMemoryInfo().GetDeviceType() == OrtMemoryInfoDeviceType_CPU;
@@ -440,6 +519,11 @@ NemotronParseModel::NemotronParseModel(std::unique_ptr<Config> config,
   CreateSessionOptionsFromConfig(decoder.session_options,
                                  *prefill_session_options_, true,
                                  /*disable_graph_capture=*/true);
+
+  if (p_device_->GetType() == DeviceType::NvTensorRtRtx) {
+    SetFixedProfile(*prefill_session_options_, MakePrefillProfile(*config_));
+    SetFixedProfile(*session_options_, MakeDecodeProfile(*config_));
+  }
 
   encoder_session_ = CreateSession(ort_env, config_->model.vision.filename,
                                    encoder_session_options_.get());

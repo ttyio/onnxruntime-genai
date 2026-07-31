@@ -11,85 +11,12 @@ namespace Generators::NvTensorRtRtxExecutionProvider {
 
 namespace {
 
-void AppendProfileShape(std::ostringstream& profile, bool& first,
-                        const std::string& name,
-                        std::initializer_list<int64_t> dimensions) {
-  if (!first) {
-    profile << ',';
-  }
-  first = false;
-  profile << name << ':';
-  bool first_dimension = true;
-  for (int64_t dimension : dimensions) {
-    if (!first_dimension) {
-      profile << 'x';
-    }
-    first_dimension = false;
-    profile << dimension;
-  }
-}
-
-std::string MakeNemotronParsePrefillProfile(const Config& config) {
-  const auto& decoder = config.model.decoder;
-  std::ostringstream profile;
-  bool first = true;
-  AppendProfileShape(profile, first, decoder.inputs.input_ids,
-                     {1, decoder.prefill_sequence_length});
-  AppendProfileShape(profile, first, decoder.inputs.attention_mask,
-                     {1, decoder.prefill_sequence_length});
-  AppendProfileShape(profile, first, decoder.inputs.encoder_hidden_states,
-                     {1, config.model.vision.num_visual_tokens,
-                      decoder.hidden_size});
-  return profile.str();
-}
-
-std::string MakeNemotronParseDecodeProfile(const Config& config) {
-  const auto& decoder = config.model.decoder;
-  std::ostringstream profile;
-  bool first = true;
-  AppendProfileShape(profile, first, decoder.inputs.input_ids, {1, 1});
-  AppendProfileShape(profile, first, decoder.inputs.attention_mask,
-                     {1, config.model.context_length});
-
-  for (int layer = 0; layer < decoder.num_hidden_layers; ++layer) {
-    AppendProfileShape(profile, first,
-                       ComposeKeyValueName(decoder.inputs.past_key_names, layer),
-                       {1, decoder.num_key_value_heads,
-                        config.model.context_length, decoder.head_size});
-    AppendProfileShape(profile, first,
-                       ComposeKeyValueName(decoder.inputs.past_value_names, layer),
-                       {1, decoder.num_key_value_heads,
-                        config.model.context_length, decoder.head_size});
-    AppendProfileShape(
-        profile, first,
-        ComposeKeyValueName(decoder.inputs.cross_past_key_names, layer),
-        {1, decoder.num_key_value_heads,
-         config.model.vision.num_visual_tokens, decoder.head_size});
-    AppendProfileShape(
-        profile, first,
-        ComposeKeyValueName(decoder.inputs.cross_past_value_names, layer),
-        {1, decoder.num_key_value_heads,
-         config.model.vision.num_visual_tokens, decoder.head_size});
-  }
-
-  AppendProfileShape(profile, first, decoder.inputs.cache_write_indices, {1});
-  return profile.str();
-}
-
 void ConfigureProfile(const Config& config,
                       OrtSessionOptions& session_options,
-                      bool is_multi_profile_enabled,
-                      bool disable_graph_capture) {
+                      bool is_multi_profile_enabled) {
+  // Nemotron Parse uses separate static encoder, prefill, and decode graphs.
+  // Their graph-specific profiles are configured by NemotronParseModel.
   if (config.model.type == "nemotron_parse") {
-    // The primary session is decode. Nemotron Parse disables graph capture on
-    // its auxiliary encoder/prefill sessions; the encoder is fully static, so
-    // only the prefill graph consumes this auxiliary fixed profile.
-    const std::string profile =
-        disable_graph_capture ? MakeNemotronParsePrefillProfile(config)
-                              : MakeNemotronParseDecodeProfile(config);
-    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_min_shapes", profile.c_str());
-    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_opt_shapes", profile.c_str());
-    session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.nv_profile_max_shapes", profile.c_str());
     return;
   }
 
@@ -229,8 +156,7 @@ DeviceInterface* AppendExecutionProvider(OrtSessionOptions& session_options,
 
   // Configure NvTensorRT-specific settings (needed for both pre-registered and built-in paths)
   NvTensorRtRtxExecutionProvider::ConfigureProfile(config, session_options,
-                                                   IsMultiProfileEnabled(config.model.decoder.session_options),
-                                                   disable_graph_capture);
+                                                   IsMultiProfileEnabled(config.model.decoder.session_options));
   if (!disable_graph_capture &&
       IsGraphCaptureEnabled(config.model.decoder.session_options)) {
     session_options.AddConfigEntry("ep.nvtensorrtrtxexecutionprovider.enable_cuda_graph", "1");
