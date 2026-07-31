@@ -16,16 +16,15 @@ namespace {
 
 constexpr std::array<float, 3> kClipMean{0.48145466f, 0.4578275f, 0.40821073f};
 constexpr std::array<float, 3> kClipStd{0.26862954f, 0.26130258f, 0.27577711f};
+constexpr std::string_view kDefaultTaskPrompt =
+    "</s><s><predict_bbox><predict_classes><output_markdown>";
 
 std::unique_ptr<OrtValue> BuildInputIds(const Tokenizer& tokenizer,
                                         std::string_view prompt,
                                         int32_t decoder_start_token_id,
                                         Ort::Allocator& allocator) {
-  if (prompt.empty()) {
-    throw std::runtime_error("Nemotron Parse requires a non-empty task prompt");
-  }
-
-  auto prompt_ids = tokenizer.Encode(std::string(prompt).c_str());
+  const auto task_prompt = prompt.empty() ? kDefaultTaskPrompt : prompt;
+  auto prompt_ids = tokenizer.Encode(std::string(task_prompt).c_str());
   const int32_t tokenizer_bos = tokenizer.TokenToTokenId("<s>");
   const int32_t tokenizer_eos = tokenizer.TokenToTokenId("</s>");
 

@@ -6,11 +6,7 @@ using Microsoft.ML.OnnxRuntimeGenAI;
 using System.CommandLine;
 using System.Text.Json;
 
-const string DefaultMultimodalPrompt = "What color is the sky?";
-// Nemotron Parse bypasses chat templates and consumes these task-control tokens
-// directly to select bounding-box, class, and Markdown document outputs.
-const string DefaultNemotronParsePrompt =
-    "</s><s><predict_bbox><predict_classes><output_markdown>";
+const string DefaultUserPrompt = "What color is the sky?";
 
 /// <summary>
 /// Example of model-mm
@@ -48,8 +44,7 @@ void ModelMM(
 )
 {
     bool isNemotronParse = model.GetModelType() == "nemotron_parse";
-    string effectiveUserPrompt = userPrompt ??
-        (isNemotronParse ? DefaultNemotronParsePrompt : DefaultMultimodalPrompt);
+    string effectiveUserPrompt = userPrompt ?? DefaultUserPrompt;
 
     // Creating running list of messages
     var system_message = new Dictionary<string, string>
@@ -91,7 +86,16 @@ void ModelMM(
         (audios, num_audios) = Common.GetUserAudios(audioPaths, interactive);
 
         // Get user prompt
-        string text = Common.GetUserPrompt(effectiveUserPrompt, interactive);
+        string text;
+        if (isNemotronParse && !interactive && userPrompt is null)
+        {
+            // An empty prompt asks the native processor to use its default task.
+            text = "";
+        }
+        else
+        {
+            text = Common.GetUserPrompt(effectiveUserPrompt, interactive);
+        }
         if (string.Compare(text, "quit()", StringComparison.OrdinalIgnoreCase) == 0)
         {
             break;

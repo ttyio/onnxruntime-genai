@@ -22,12 +22,7 @@ from common import (
     set_logger,
 )
 
-DEFAULT_MULTIMODAL_PROMPT = "What color is the sky?"
-# Nemotron Parse bypasses chat templates and consumes these task-control tokens
-# directly to select bounding-box, class, and Markdown document outputs.
-DEFAULT_NEMOTRON_PARSE_PROMPT = (
-    "</s><s><predict_bbox><predict_classes><output_markdown>"
-)
+DEFAULT_USER_PROMPT = "What color is the sky?"
 
 
 def main(args):
@@ -42,15 +37,10 @@ def main(args):
     config = get_config(args.model_path, args.execution_provider, args.ep_path)
     model = og.Model(config)
     is_nemotron_parse = model.type == "nemotron_parse"
-    default_user_prompt = (
-        DEFAULT_NEMOTRON_PARSE_PROMPT
-        if is_nemotron_parse
-        else DEFAULT_MULTIMODAL_PROMPT
-    )
     user_prompt = (
         args.user_prompt
         if args.user_prompt is not None
-        else default_user_prompt
+        else DEFAULT_USER_PROMPT
     )
     if not hasattr(args, "max_length") and not is_nemotron_parse:
         args.max_length = 7680
@@ -104,7 +94,11 @@ def main(args):
         audios, num_audios = get_user_audios(args.audio_paths, args.non_interactive)
 
         # Get user prompt
-        text = get_user_prompt(user_prompt, args.non_interactive)
+        if is_nemotron_parse and args.non_interactive and args.user_prompt is None:
+            # An empty prompt asks the native processor to use its default task.
+            text = ""
+        else:
+            text = get_user_prompt(user_prompt, args.non_interactive)
         if text == "quit()":
             break
         if is_nemotron_parse:

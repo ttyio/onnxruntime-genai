@@ -16,11 +16,7 @@
 
 OgaGenerator* g_generator = nullptr;
 
-constexpr const char* kDefaultMultimodalPrompt = "What color is the sky?";
-// Nemotron Parse bypasses chat templates and consumes these task-control tokens
-// directly to select bounding-box, class, and Markdown document outputs.
-constexpr const char* kDefaultNemotronParsePrompt =
-    "</s><s><predict_bbox><predict_classes><output_markdown>";
+constexpr const char* kDefaultUserPrompt = "What color is the sky?";
 
 void TerminateGeneration(int signum) {
   if (g_generator == nullptr) {
@@ -53,11 +49,8 @@ void CXX_API(
   auto model = OgaModel::Create(*config);
   const bool is_nemotron_parse =
       std::string(model->GetType()) == "nemotron_parse";
-  const std::string default_user_prompt =
-      is_nemotron_parse ? kDefaultNemotronParsePrompt
-                        : kDefaultMultimodalPrompt;
   const std::string effective_user_prompt =
-      user_prompt.empty() ? default_user_prompt : user_prompt;
+      user_prompt.empty() ? kDefaultUserPrompt : user_prompt;
 
   if (verbose) std::cout << "Creating tokenizer..." << std::endl;
   auto tokenizer = OgaTokenizer::Create(*model);
@@ -101,7 +94,13 @@ void CXX_API(
     std::tie(audios, num_audios) = GetUserAudios(audio_paths, interactive);
 
     // Get user prompt
-    std::string text = GetUserPrompt(effective_user_prompt, interactive);
+    std::string text;
+    if (is_nemotron_parse && !interactive && user_prompt.empty()) {
+      // An empty prompt asks the native processor to use its default task.
+      text.clear();
+    } else {
+      text = GetUserPrompt(effective_user_prompt, interactive);
+    }
     signal(SIGINT, TerminateGeneration);
     if (text == "quit()") {
       break;  // Exit the loop
