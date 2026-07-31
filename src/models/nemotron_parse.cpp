@@ -405,10 +405,6 @@ NemotronParseModel::NemotronParseModel(std::unique_ptr<Config> config,
                                        OrtEnv& ort_env)
     : Model{std::move(config)} {
   const auto& decoder = config_->model.decoder;
-  if (decoder.cache_update_mode != "tensor_scatter") {
-    throw std::runtime_error(
-        "Nemotron Parse native OGA execution requires cache_update_mode=tensor_scatter");
-  }
   if (config_->model.vision.filename.empty() || decoder.filename.empty() ||
       decoder.prefill_filename.empty() || config_->model.context_length <= 0 ||
       decoder.prefill_sequence_length <= 0 ||

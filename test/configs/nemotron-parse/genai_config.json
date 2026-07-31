@@ -16,7 +16,6 @@
     "decoder": {
       "filename": "decoder.onnx",
       "prefill_filename": "decoder_prefill.onnx",
-      "cache_update_mode": "tensor_scatter",
       "prefill_sequence_length": 8,
       "hidden_size": 1024,
       "head_size": 64,

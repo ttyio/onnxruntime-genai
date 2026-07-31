@@ -244,10 +244,9 @@ def _reference_decoder(model, input_ids, attention_mask, encoder_states):
 
 
 class NemotronParseBuilderTests(TestCase):
-    def test_defaults_to_tensor_scatter_and_block32(self):
+    def test_defaults_to_block32(self):
         builder = _make_builder()
 
-        self.assertEqual(builder.decoder_cache_mode, "tensor_scatter")
         self.assertEqual(builder.prefill_sequence_length, 8)
         self.assertEqual(builder.extra_options["block_size"], 32)
         self.assertIs(builder.hf_remote, False)
@@ -266,12 +265,6 @@ class NemotronParseBuilderTests(TestCase):
                 cache_sequence_length=8,
                 prefill_sequence_length=8,
             )
-
-    def test_rejects_unsupported_cache_mode(self):
-        with self.assertRaisesRegex(
-            ValueError, "supported modes: tensor_scatter"
-        ):
-            _make_builder(decoder_cache_mode="concat")
 
     def test_rejects_unknown_export_component(self):
         with self.assertRaisesRegex(
@@ -656,9 +649,6 @@ class NemotronParseBuilderTests(TestCase):
         self.assertEqual(
             decoder["prefill_sequence_length"],
             builder.prefill_sequence_length,
-        )
-        self.assertEqual(
-            decoder["cache_update_mode"], "tensor_scatter"
         )
         self.assertEqual(
             decoder["inputs"]["cache_write_indices"],

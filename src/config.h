@@ -320,7 +320,6 @@ struct Config {
       SessionOptions session_options;
       std::optional<RunOptions> run_options;
 
-      std::string cache_update_mode;
       int prefill_sequence_length{};
 
       int hidden_size{};          // Not currently used, potentially useful for embeddings in the future

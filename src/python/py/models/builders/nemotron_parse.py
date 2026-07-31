@@ -85,16 +85,6 @@ class NemotronParseModel:
         if self.image_height <= 0 or self.image_width <= 0:
             raise ValueError("image_height and image_width must be positive.")
 
-        self.decoder_cache_mode = str(
-            self.extra_options.get(
-                "decoder_cache_mode", "tensor_scatter"
-            )
-        ).lower()
-        if self.decoder_cache_mode != "tensor_scatter":
-            raise ValueError(
-                f"decoder_cache_mode={self.decoder_cache_mode} is not supported "
-                "by this model; supported modes: tensor_scatter."
-            )
         self.prefill_sequence_length = int(
             self.extra_options.get("prefill_sequence_length", 8)
         )
@@ -334,7 +324,6 @@ class NemotronParseModel:
                     "filename": self.decoder_filename,
                     "prefill_filename": self.decoder_prefill_filename,
                     "prefill_sequence_length": self.prefill_sequence_length,
-                    "cache_update_mode": self.decoder_cache_mode,
                     "hidden_size": decoder_config.d_model,
                     "head_size": (
                         decoder_config.d_model

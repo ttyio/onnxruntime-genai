@@ -234,7 +234,6 @@ model-specific options are:
 - `image_height` and `image_width`: fixed encoder input dimensions. They default to the checkpoint's `image_size` (or `768` when absent); the encoder graph is specialized to these dimensions.
 - `prefill_sequence_length`: fixed decoder prefill length. The default is `8`.
 - `export_components`: comma-separated components to export (`encoder`, `decoder`, or both). The default is `encoder,decoder`; selecting `decoder` also exports its prefill graph.
-- `decoder_cache_mode`: decoder KV-cache update mode. The only supported value is the default, `tensor_scatter`.
 - `cache_sequence_length`: static self-attention KV-cache and decoder attention-mask length. The default is the model's maximum sequence length and it must exceed `prefill_sequence_length`.
 - `export_device`: device used to load the model and create export inputs. Supported values are `cpu` (the default) and `cuda`.
 
@@ -248,10 +247,10 @@ following exports a native-size INT4 package:
 
 ```bash
 # From wheel:
-python -m onnxruntime_genai.models.builder -i path_to_nemotron_parse_model -o path_to_output_folder -p int4 -e NvTensorRtRtx --extra_options hf_remote=true image_height=2048 image_width=1648 prefill_sequence_length=8 cache_sequence_length=1032 export_components=encoder,decoder decoder_cache_mode=tensor_scatter export_device=cuda use_qdq=true block_size=32
+python -m onnxruntime_genai.models.builder -i path_to_nemotron_parse_model -o path_to_output_folder -p int4 -e NvTensorRtRtx --extra_options hf_remote=true image_height=2048 image_width=1648 prefill_sequence_length=8 cache_sequence_length=1032 export_components=encoder,decoder export_device=cuda use_qdq=true block_size=32
 
 # From source:
-python builder.py -i path_to_nemotron_parse_model -o path_to_output_folder -p int4 -e NvTensorRtRtx --extra_options hf_remote=true image_height=2048 image_width=1648 prefill_sequence_length=8 cache_sequence_length=1032 export_components=encoder,decoder decoder_cache_mode=tensor_scatter export_device=cuda use_qdq=true block_size=32
+python builder.py -i path_to_nemotron_parse_model -o path_to_output_folder -p int4 -e NvTensorRtRtx --extra_options hf_remote=true image_height=2048 image_width=1648 prefill_sequence_length=8 cache_sequence_length=1032 export_components=encoder,decoder export_device=cuda use_qdq=true block_size=32
 ```
 
 Run the exported package through the shared multimodal example:
