@@ -230,35 +230,34 @@ void DefaultPositionInputs::UpdateAttentionMask(int total_length, int new_kv_len
   if (position_ids_shape_[0] != 1 && !(total_length == 0 || new_kv_length == 1))
     throw std::runtime_error("DefaultPositionInputs::UpdatePositionIDs - batch_size must be 1 for continuous decoding.");
 
-  const bool use_static_mask = ShouldUseStaticMaskHandling();
   const int mask_capacity = GetAttentionMaskCapacity();
-  if (use_static_mask && total_length > mask_capacity) {
+  if (ShouldUseStaticMaskHandling() && total_length > mask_capacity) {
     throw std::runtime_error("DefaultPositionInputs::UpdateAttentionMask - total_length exceeds the static mask capacity.");
   }
 
   CreateNextAttentionMaskTensor(total_length);
 
   // Update the attention mask on the device. If it fails, copy to CPU, update there, and copy back to device.
-  if (!model_.p_device_inputs_->UpdateAttentionMask(use_static_mask ? nullptr : attention_mask_next_->GetMutableRawData(),
+  if (!model_.p_device_inputs_->UpdateAttentionMask(ShouldUseStaticMaskHandling() ? nullptr : attention_mask_next_->GetMutableRawData(),
                                                     attention_mask_->GetMutableRawData(),
                                                     static_cast<int>(attention_mask_shape_[0]),
                                                     new_kv_length,
                                                     total_length,
                                                     mask_capacity,
-                                                    use_static_mask,
+                                                    ShouldUseStaticMaskHandling(),
                                                     type_)) {
     // auto* attention_mask_next_span = state_.params_->use_graph_capture ? &attention_mask_next_->GetByteSpan() : nullptr;
     DeviceSpan<uint8_t> attention_mask_next_span;
-    if (!use_static_mask)
+    if (!ShouldUseStaticMaskHandling())
       attention_mask_next_span = attention_mask_next_->GetByteSpan();
     auto attention_mask_span = attention_mask_->GetByteSpan();
-    GetDeviceInterface(DeviceType::CPU)->UpdateAttentionMask(use_static_mask ? nullptr : attention_mask_next_span.CopyDeviceToCpu().data(), attention_mask_span.CopyDeviceToCpu().data(), static_cast<int>(attention_mask_shape_[0]), new_kv_length, total_length, mask_capacity, use_static_mask, type_);
-    if (!use_static_mask)
+    GetDeviceInterface(DeviceType::CPU)->UpdateAttentionMask(ShouldUseStaticMaskHandling() ? nullptr : attention_mask_next_span.CopyDeviceToCpu().data(), attention_mask_span.CopyDeviceToCpu().data(), static_cast<int>(attention_mask_shape_[0]), new_kv_length, total_length, mask_capacity, ShouldUseStaticMaskHandling(), type_);
+    if (!ShouldUseStaticMaskHandling())
       attention_mask_next_span.CopyCpuToDevice();
     attention_mask_span.CopyCpuToDevice();
   }
 
-  if (!use_static_mask) {
+  if (!ShouldUseStaticMaskHandling()) {
     attention_mask_->ort_tensor_ = std::move(attention_mask_next_->ort_tensor_);
     state_.inputs_[mask_input_index_] = attention_mask_->GetOrtTensor();
   }
