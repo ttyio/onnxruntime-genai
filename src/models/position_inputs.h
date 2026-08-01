@@ -10,15 +10,18 @@ struct PositionInputs {
 };
 
 enum class AttentionMaskMode {
+  // Select static handling for graph capture or TRT-RTX shared KV buffers.
   Automatic,
+  // Resize the mask to the active sequence length as generation advances.
   Dynamic,
+  // Keep one fixed-shape mask and update its active prefix in place.
   Static,
 };
 
 struct AttentionMaskOptions {
   AttentionMaskMode mode{AttentionMaskMode::Automatic};
-  // A value of 0 uses the generation max_length for a static mask.
-  int static_length{};
+  // Overrides the static mask's second dimension; 0 uses generation max_length.
+  int static_mask_length_override{};
 };
 
 struct DefaultPositionInputs : PositionInputs {

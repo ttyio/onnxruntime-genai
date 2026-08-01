@@ -83,8 +83,8 @@ DefaultPositionInputs::DefaultPositionInputs(const Model& model, State& state, D
       state_{state},
       attention_mask_name_{attention_mask_name},
       attention_mask_options_{attention_mask_options} {
-  if (attention_mask_options_.static_length < 0) {
-    throw std::runtime_error("attention mask static_length must not be negative");
+  if (attention_mask_options_.static_mask_length_override < 0) {
+    throw std::runtime_error("attention mask static_mask_length_override must not be negative");
   }
 
   has_mask_input_ = model_.session_info_.HasInput(attention_mask_name_);
@@ -450,8 +450,8 @@ bool DefaultPositionInputs::ShouldUseStaticMaskHandling() const {
 }
 
 int DefaultPositionInputs::GetAttentionMaskCapacity() const {
-  return attention_mask_options_.static_length > 0
-             ? attention_mask_options_.static_length
+  return attention_mask_options_.static_mask_length_override > 0
+             ? attention_mask_options_.static_mask_length_override
              : state_.params_->search.max_length;
 }
 
