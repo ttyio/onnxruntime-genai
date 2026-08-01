@@ -16,6 +16,8 @@
 
 OgaGenerator* g_generator = nullptr;
 
+// Conversational-model fallback only. An omitted Nemotron Parse prompt uses
+// the native task controls: </s><s><predict_bbox><predict_classes><output_markdown>.
 constexpr const char* kDefaultUserPrompt = "What color is the sky?";
 
 void TerminateGeneration(int signum) {
