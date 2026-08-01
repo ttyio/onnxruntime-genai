@@ -25,7 +25,7 @@ from common import (
 DEFAULT_USER_PROMPT = "What color is the sky?"
 
 
-def main(args, max_length_was_provided):
+def main(args):
     if args.debug:
         set_logger()
     register_ep(args.execution_provider, args.ep_path, args.use_winml)
@@ -37,14 +37,14 @@ def main(args, max_length_was_provided):
     config = get_config(args.model_path, args.execution_provider, args.ep_path)
     model = og.Model(config)
     is_nemotron_parse = model.type == "nemotron_parse"
-    if is_nemotron_parse and not max_length_was_provided:
-        # Keep the model package's fixed context length instead of the example's fallback.
-        del args.max_length
     user_prompt = (
         args.user_prompt
         if args.user_prompt is not None
         else DEFAULT_USER_PROMPT
     )
+    # Nemotron Parse uses the fixed context length from its model package.
+    if not hasattr(args, "max_length") and not is_nemotron_parse:
+        args.max_length = 7680
     if args.verbose:
         print("Model loaded")
 
@@ -222,6 +222,4 @@ if __name__ == "__main__":
     get_guidance_args(parser)
 
     args = parser.parse_args()
-    max_length_was_provided = hasattr(args, "max_length")
-    args.max_length = args.max_length if max_length_was_provided else 7680
-    main(args, max_length_was_provided)
+    main(args)
