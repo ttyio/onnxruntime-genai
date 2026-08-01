@@ -22,6 +22,8 @@ from common import (
     set_logger,
 )
 
+# Conversational-model fallback only. An omitted Nemotron Parse prompt uses
+# the native task controls: </s><s><predict_bbox><predict_classes><output_markdown>.
 DEFAULT_USER_PROMPT = "What color is the sky?"
 
 

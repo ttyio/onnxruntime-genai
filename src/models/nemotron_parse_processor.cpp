@@ -16,6 +16,7 @@ namespace {
 
 constexpr std::array<float, 3> kClipMean{0.48145466f, 0.4578275f, 0.40821073f};
 constexpr std::array<float, 3> kClipStd{0.26862954f, 0.26130258f, 0.27577711f};
+// Request bounding boxes, element classes, and Markdown in the parsed output.
 constexpr std::string_view kDefaultTaskPrompt =
     "</s><s><predict_bbox><predict_classes><output_markdown>";
 
