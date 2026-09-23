@@ -2064,6 +2064,8 @@ struct Model_Element : JSON::Element {
       v_.type = JSON::Get<std::string_view>(value);
     } else if (name == "tokenizer_dir") {
       v_.tokenizer_dir = JSON::Get<std::string_view>(value);
+    } else if (name == "default_user_prompt") {
+      v_.default_user_prompt = std::string{JSON::Get<std::string_view>(value)};
     } else if (name == "vocab_size") {
       v_.vocab_size = SafeDoubleToInt(JSON::Get<double>(value), name);
     } else if (name == "context_length") {

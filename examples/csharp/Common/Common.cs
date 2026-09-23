@@ -189,14 +189,21 @@ namespace CommonUtils
         }
 
         /// <summary>
-        /// Get prompt for 'user' role in chat template
+        /// Read the package's prompt default, preserving an explicitly empty value.
         /// </summary>
-        /// <param name="prompt">Provided prompt</param>
-        /// <param name="interactive">Interactive mode (otherwise uses either user-provided prompt or default)</param>
-        /// <returns>
-        /// Prompt to use
-        /// </returns>
-        public static string GetUserPrompt(string prompt, bool interactive)
+        public static string GetDefaultUserPrompt(string modelPath, string fallback)
+        {
+            using var config = JsonDocument.Parse(File.ReadAllText(Path.Combine(modelPath, "genai_config.json")));
+            var model = config.RootElement.GetProperty("model");
+            return model.TryGetProperty("default_user_prompt", out var prompt)
+                ? prompt.GetString() ?? throw new JsonException("model.default_user_prompt must be a string")
+                : fallback;
+        }
+
+        /// <summary>
+        /// Read a prompt. When allowEmpty is set, interactive Enter uses the supplied default.
+        /// </summary>
+        public static string GetUserPrompt(string prompt, bool interactive, bool allowEmpty = false)
         {
             string? text;
             while (true)
@@ -211,7 +218,15 @@ namespace CommonUtils
                     text = prompt;
                 }
 
-                if (string.IsNullOrEmpty(text))
+                if (text == "" && interactive && allowEmpty)
+                {
+                    text = prompt;
+                }
+                if (text is null)
+                {
+                    throw new EndOfStreamException("Input ended while reading a prompt");
+                }
+                if (text.Length == 0 && !allowEmpty)
                 {
                     Console.WriteLine("Empty input. Please enter a valid prompt.");
                     continue;  // Skip to the next iteration if input is empty
@@ -339,16 +354,11 @@ namespace CommonUtils
         /// <returns>
         /// Combined content for 'user' role
         /// </returns>
-        public static string GetUserContent(string model_type, int num_images, int num_audios, string prompt)
+        public static object GetUserContent(string model_type, int num_images, int num_audios, string prompt)
         {
-            string content;
+            object content;
             // Combine all image tags, audio tags, and text into one user content
-            if (model_type == "nemotron_parse")
-            {
-                // Nemotron Parse consumes document-task control tokens directly.
-                content = prompt;
-            }
-            else if (model_type == "phi3v")
+            if (model_type == "phi3v")
             {
                 // Phi-3 vision, Phi-3.5 vision
                 var image_tags = "";
@@ -399,7 +409,7 @@ namespace CommonUtils
                     ["type"] = "text",
                     ["text"] = prompt
                 });
-                content = JsonSerializer.Serialize(list);
+                content = list;
             }
 
             return content;

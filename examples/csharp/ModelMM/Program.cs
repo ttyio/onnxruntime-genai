@@ -6,8 +6,6 @@ using Microsoft.ML.OnnxRuntimeGenAI;
 using System.CommandLine;
 using System.Text.Json;
 
-// Conversational-model fallback only. An omitted Nemotron Parse prompt uses
-// the native task controls: </s><s><predict_bbox><predict_classes><output_markdown>.
 const string DefaultUserPrompt = "What color is the sky?";
 
 /// <summary>
@@ -45,16 +43,15 @@ void ModelMM(
     bool verbose
 )
 {
-    bool isNemotronParse = model.GetModelType() == "nemotron_parse";
-    string effectiveUserPrompt = userPrompt ?? DefaultUserPrompt;
+    string effectiveUserPrompt = userPrompt ?? Common.GetDefaultUserPrompt(modelPath, DefaultUserPrompt);
 
     // Creating running list of messages
-    var system_message = new Dictionary<string, string>
+    var system_message = new Dictionary<string, object>
     {
         { "role", "system" },
         { "content", systemPrompt }
     };
-    var input_list = new List<Dictionary<string, string>>() { system_message };
+    var input_list = new List<Dictionary<string, object>>() { system_message };
 
     // Get and set guidance info if requested
     string guidance_type = "";
@@ -88,37 +85,17 @@ void ModelMM(
         (audios, num_audios) = Common.GetUserAudios(audioPaths, interactive);
 
         // Get user prompt
-        string text;
-        if (isNemotronParse && !interactive && userPrompt is null)
-        {
-            // An empty prompt asks the native processor to use its default task.
-            text = "";
-        }
-        else
-        {
-            text = Common.GetUserPrompt(effectiveUserPrompt, interactive);
-        }
+        string text = Common.GetUserPrompt(effectiveUserPrompt, interactive, allowEmpty: true);
         if (string.Compare(text, "quit()", StringComparison.OrdinalIgnoreCase) == 0)
         {
             break;
-        }
-        if (isNemotronParse)
-        {
-            if (num_images != 1)
-            {
-                throw new ArgumentException("Nemotron Parse requires exactly one image");
-            }
-            if (num_audios != 0)
-            {
-                throw new ArgumentException("Nemotron Parse does not accept audio input");
-            }
         }
 
         // Construct user content based on inputs
         var user_content = Common.GetUserContent(model.GetModelType(), num_images, num_audios, text);
 
         // Add user message to list of messages
-        var user_message = new Dictionary<string, string>
+        var user_message = new Dictionary<string, object>
         {
             { "role", "user" },
             { "content", user_content }
@@ -148,21 +125,14 @@ void ModelMM(
 
         // Apply chat template
         string prompt;
-        if (isNemotronParse)
+        try
+        {
+            string messages = JsonSerializer.Serialize(input_list);
+            prompt = Common.ApplyChatTemplate(modelPath, tokenizer, messages, add_generation_prompt: true, tools);
+        }
+        catch
         {
             prompt = text;
-        }
-        else
-        {
-            try
-            {
-                string messages = JsonSerializer.Serialize(input_list);
-                prompt = Common.ApplyChatTemplate(modelPath, tokenizer, messages, add_generation_prompt: true, tools);
-            }
-            catch
-            {
-                prompt = text;
-            }
         }
         if (verbose) Console.WriteLine($"Prompt: {prompt}");
 
@@ -304,10 +274,7 @@ RootCommand GetArgs()
     )
     {
         Arity = ArgumentArity.ExactlyOne,
-        Description = "User prompt. Nemotron Parse accepts 1 through context_length-1 " +
-            "tokens including special tokens (no padding or truncation). " +
-            "TRT-RTX uses a static fast path at prefill_sequence_length. " +
-            "The default Nemotron Parse task uses 8 tokens."
+        Description = "User prompt. Defaults to the package's default_user_prompt, or the example default when absent. Model prompt restrictions apply."
     };
 
     var rewind = new Option<bool>(

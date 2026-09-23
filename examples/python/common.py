@@ -184,13 +184,23 @@ def apply_chat_template(
     return prompt
 
 
-def get_user_prompt(prompt: str, non_interactive: bool) -> str:
+def get_default_user_prompt(model_path: str, fallback: str) -> str:
+    with open(os.path.join(model_path, "genai_config.json"), encoding="utf-8") as f:
+        model_config = json.load(f)["model"]
+    prompt = model_config.get("default_user_prompt", fallback)
+    if not isinstance(prompt, str):
+        raise ValueError("model.default_user_prompt must be a string")
+    return prompt
+
+
+def get_user_prompt(prompt: str, non_interactive: bool, allow_empty: bool = False) -> str:
     """
     Get prompt for 'user' role in chat template
 
     Args:
         prompt (str): provided prompt
         non_interactive (bool): non-interactive mode (uses either provided prompt or default)
+        allow_empty (bool): allow empty prompts; interactive Enter uses the provided default
     Returns:
         str: prompt to encode
     """
@@ -204,7 +214,9 @@ def get_user_prompt(prompt: str, non_interactive: bool) -> str:
             # Use provided prompt (whether default or user-provided)
             text = prompt
 
-        if not text:
+        if not text and not non_interactive and allow_empty:
+            text = prompt
+        if not text and not allow_empty:
             print("Error, input cannot be empty")
             continue
         else:
@@ -304,11 +316,7 @@ def get_user_content(model_type: str, num_images: int, num_audios: int, prompt: 
     """
     content = None
     # Combine all image tags, audio tags, and text into one user content
-    if model_type == "nemotron_parse":
-        # Nemotron Parse is a document parser, not a chat model. Its task
-        # control tokens are passed directly to the native processor.
-        content = prompt
-    elif model_type == "phi3v":
+    if model_type == "phi3v":
         # Phi-3 vision, Phi-3.5 vision
         image_tags = "".join([f"<|image_{i + 1}|>\n" for i in range(num_images)])
         content = image_tags + prompt

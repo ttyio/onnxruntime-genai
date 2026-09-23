@@ -153,6 +153,7 @@ struct Config {
     std::string type;
 
     std::string tokenizer_dir;  // Directory containing tokenizer files. Empty means alongside genai_config.json. Resolved via Config::ResolvePath.
+    std::optional<std::string> default_user_prompt;  // Package default when the caller omits a prompt; empty is a valid value.
 
     int pad_token_id{};             // The id of the padding token.
     std::vector<int> eos_token_id;  // The end-of-stream tokens (when set as a single value it is converted to a vector with one value).

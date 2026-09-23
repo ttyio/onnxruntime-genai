@@ -252,6 +252,14 @@ state bookkeeping. RADIO's packed QKV, patch geometry, and compression neck, plu
 mBART's absolute positions, cross-attention, and fixed TensorScatter cache, remain
 model-specific; they do not use the base decoder's fused-attention/cache pipeline.
 
+The exported package declares `model.default_user_prompt` in `genai_config.json`
+as `</s><s><predict_bbox><predict_classes><output_markdown>`. The multimodal examples
+use this optional string when `--user_prompt` is omitted; explicit input, including
+an empty string, is preserved. Packages without the setting retain the examples'
+conversational default. The exported `chat_template.jinja` passes through only the
+current user message's text, leaving special-token handling to the processor.
+Re-export existing packages to use these metadata-driven example defaults.
+
 Its model-specific options are:
 
 - `image_height` and `image_width`: fixed encoder input dimensions. They default to the checkpoint's `image_size` (or `768` when absent); the encoder graph is specialized to these dimensions.

@@ -1039,6 +1039,7 @@ class NemotronParseBuilderTests(TestCase):
             config["search"]["past_present_share_buffer"], True
         )
         self.assertEqual(config["search"]["repetition_penalty"], 1.1)
+        self.assertEqual(config["model"]["default_user_prompt"], NemotronParseModel.default_user_prompt)
 
     def test_config_uses_loaded_generation_defaults(self):
         builder = _make_builder()
@@ -1111,6 +1112,7 @@ class NemotronParseBuilderTests(TestCase):
                 builder.save_processing("local", {}, tmp)
 
             tokenizer.save_pretrained.assert_called_once_with(tmp)
+            self.assertEqual((Path(tmp) / "chat_template.jinja").read_text(), NemotronParseModel.chat_template)
             config = json.loads(
                 (Path(tmp) / "processor_config.json").read_text()
             )

@@ -238,7 +238,7 @@ struct GuidanceArgs {
  *
  * @return true if command-line arguments can be parsed, else false
  */
-bool ParseArgs(int argc, char** argv, GeneratorParamsArgs& generator_params_args, GuidanceArgs& guidance_args, std::string& model_path, std::string& ep, std::string& ep_path, std::string& system_prompt, std::string& user_prompt, bool& verbose, bool& debug, bool& interactive, bool& rewind, std::vector<std::string>& image_paths, std::vector<std::string>& audio_paths);
+bool ParseArgs(int argc, char** argv, GeneratorParamsArgs& generator_params_args, GuidanceArgs& guidance_args, std::string& model_path, std::string& ep, std::string& ep_path, std::string& system_prompt, std::string& user_prompt, bool& verbose, bool& debug, bool& interactive, bool& rewind, std::vector<std::string>& image_paths, std::vector<std::string>& audio_paths, bool* user_prompt_provided = nullptr);
 
 /**
  * @brief Set log options inside ORT GenAI
@@ -304,7 +304,10 @@ std::string ApplyChatTemplate(const std::string& model_path, OgaTokenizer& token
  *
  * @return Prompt to use
  */
-std::string GetUserPrompt(const std::string& prompt, bool interactive);
+std::string GetUserPrompt(const std::string& prompt, bool interactive, bool allow_empty = false);
+
+// Read the package's prompt default, preserving an explicitly empty value.
+std::string GetDefaultUserPrompt(const std::string& model_path, const std::string& fallback);
 
 /**
  * @brief Get paths to media for user

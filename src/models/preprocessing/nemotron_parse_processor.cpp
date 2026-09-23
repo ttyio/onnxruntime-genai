@@ -28,8 +28,7 @@ std::unique_ptr<OrtValue> BuildInputIds(const Tokenizer& tokenizer,
                                         int64_t required_prompt_length,
                                         int context_length,
                                         Ort::Allocator& allocator) {
-  const auto task_prompt = prompt.empty() ? kDefaultTaskPrompt : prompt;
-  auto prompt_ids = tokenizer.Encode(std::string(task_prompt).c_str());
+  auto prompt_ids = tokenizer.Encode(std::string(prompt).c_str());
   const int32_t tokenizer_bos = tokenizer.TokenToTokenId("<s>");
   const int32_t tokenizer_eos = tokenizer.TokenToTokenId("</s>");
 
@@ -178,7 +177,8 @@ NemotronParseProcessor::NemotronParseProcessor(
     : pixel_values_type_{session_info.GetInputDataType(
           config.model.vision.inputs.pixel_values)},
       decoder_start_token_id_{config.model.bos_token_id},
-      context_length_{config.model.context_length} {
+      context_length_{config.model.context_length},
+      default_user_prompt_{config.model.default_user_prompt.value_or(std::string{kDefaultTaskPrompt})} {
   const auto input_ids_shape =
       session_info.GetInputShape(config.model.decoder.inputs.input_ids);
   if (input_ids_shape.size() != 2) {
@@ -230,7 +230,7 @@ std::unique_ptr<NamedTensors> NemotronParseProcessor::Process(
   named_tensors->emplace(
       std::string(Config::Defaults::InputIdsName),
       std::make_shared<Tensor>(BuildInputIds(
-          tokenizer, prompt, decoder_start_token_id_,
+          tokenizer, prompt.empty() ? std::string_view{default_user_prompt_} : prompt, decoder_start_token_id_,
           required_prompt_length_, context_length_, allocator)));
 
   ort_extensions::OrtxObjectPtr<OrtxTensorResult> result;

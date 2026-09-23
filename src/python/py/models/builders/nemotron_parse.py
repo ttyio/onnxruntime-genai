@@ -19,6 +19,18 @@ from .nemotron_parse_encoder import NemotronParseEncoderComponent
 class NemotronParseModel:
     """Build the RADIO/cross-KV encoder and unified mBART decoder."""
 
+    default_user_prompt = "</s><s><predict_bbox><predict_classes><output_markdown>"
+    # The examples append the current user message before applying the template.
+    chat_template = (
+        "{%- set content = messages[-1]['content'] -%}"
+        "{%- if content is string -%}{{ content }}"
+        "{%- else -%}"
+        "{%- for part in content -%}"
+        "{%- if part['type'] == 'text' -%}{{ part['text'] }}{%- endif -%}"
+        "{%- endfor -%}"
+        "{%- endif -%}"
+    )
+
     def __init__(
         self, config, io_dtype, onnx_dtype, ep, cache_dir, extra_options
     ):
@@ -249,6 +261,7 @@ class NemotronParseModel:
         genai_config = {
             "model": {
                 "type": self.model_type,
+                "default_user_prompt": self.default_user_prompt,
                 "bos_token_id": self.config.decoder_start_token_id,
                 "eos_token_id": decoder_config.eos_token_id,
                 "pad_token_id": decoder_config.pad_token_id,
@@ -350,6 +363,8 @@ class NemotronParseModel:
             f"Saving tokenizer and native image processor config in {out_dir}"
         )
         tokenizer.save_pretrained(out_dir)
+        with open(os.path.join(out_dir, "chat_template.jinja"), "w", encoding="utf-8") as template_file:
+            template_file.write(self.chat_template)
         processor_config = {
             "processor": {
                 "name": "nemotron_parse_image_processor",

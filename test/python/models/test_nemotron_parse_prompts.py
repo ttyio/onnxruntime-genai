@@ -26,13 +26,18 @@ def _save_graph(path, nodes, inputs, outputs, initializers=()):
 @pytest.fixture
 def model_factory(tmp_path):
     def create(prefill_length=8, fixed_length=None, provider="cpu", fail_decoder=False,
-               decoder_run_options=None, invalid_cache=False, cache_dtype=np.float32):
+               decoder_run_options=None, invalid_cache=False, cache_dtype=np.float32,
+               default_user_prompt=DEFAULT_TASK):
         cache_type = helper.np_dtype_to_tensor_dtype(np.dtype(cache_dtype))
         model_dir = tmp_path / f"model_{prefill_length}_{fixed_length}"
         model_dir.mkdir()
         config_path = Path(__file__).parents[2] / "configs/nemotron-parse/genai_config.json"
         config = json.loads(config_path.read_text())
         config["model"].update(context_length=CONTEXT_LENGTH, vocab_size=32)
+        if default_user_prompt is None:
+            config["model"].pop("default_user_prompt", None)
+        else:
+            config["model"]["default_user_prompt"] = default_user_prompt
         config["model"]["vision"]["num_visual_tokens"] = 1
         config["model"]["decoder"].update(
             prefill_sequence_length=prefill_length,
@@ -293,6 +298,92 @@ def test_processor_rejects_wrong_list_size(model_factory, images, prompts):
     processor = model_factory().create_multimodal_processor()
     with pytest.raises(RuntimeError, match="exactly one prompt"):
         processor(prompts, images=images)
+
+
+@pytest.fixture
+def example_common(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[3] / "examples/python"))
+    import common
+    return common
+
+
+@pytest.mark.parametrize("configured", [None, DEFAULT_TASK, "", "custom"])
+def test_example_package_prompt_default(tmp_path, example_common, configured):
+    model = {} if configured is None else {"default_user_prompt": configured}
+    (tmp_path / "genai_config.json").write_text(json.dumps({"model": model}))
+    fallback = "What color is the sky?"
+    assert example_common.get_default_user_prompt(str(tmp_path), fallback) == (
+        fallback if configured is None else configured
+    )
+
+
+@pytest.mark.parametrize("configured", [None, 42, [], {}])
+def test_example_rejects_invalid_prompt_default(tmp_path, example_common, configured):
+    (tmp_path / "genai_config.json").write_text(json.dumps({"model": {"default_user_prompt": configured}}))
+    with pytest.raises(ValueError, match="must be a string"):
+        example_common.get_default_user_prompt(str(tmp_path), "fallback")
+
+
+@pytest.mark.parametrize("prompt", ["", "What color is the sky?", DEFAULT_TASK])
+def test_example_preserves_explicit_prompt(example_common, prompt):
+    assert example_common.get_user_prompt(prompt, non_interactive=True, allow_empty=True) == prompt
+
+
+def test_example_interactive_default(example_common, monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "")
+    assert example_common.get_user_prompt(DEFAULT_TASK, non_interactive=False, allow_empty=True) == DEFAULT_TASK
+
+
+def test_example_chat_input_still_requires_text(example_common, monkeypatch):
+    answers = iter(["", "custom"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert example_common.get_user_prompt("fallback", non_interactive=False) == "custom"
+
+
+@pytest.mark.parametrize("configured", [None, DEFAULT_TASK, "x", ""])
+def test_processor_uses_package_prompt_default(model_factory, images, configured):
+    model = model_factory(default_user_prompt=configured)
+    actual = model.create_multimodal_processor()("", images=images)["input_ids"].as_numpy()
+    task = DEFAULT_TASK if configured is None else configured
+    expected = [2, 0, *og.Tokenizer(model).encode(task).tolist(), 2]
+    np.testing.assert_array_equal(actual, [expected])
+
+
+@pytest.mark.parametrize("structured", [False, True])
+@pytest.mark.parametrize("prompt", ["", DEFAULT_TASK, "x", "What color is the sky?", " x\n"])
+def test_exported_chat_template_preserves_task(
+    model_factory, images, tmp_path, monkeypatch, example_common, structured, prompt
+):
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[3] / "src/python/py/models"))
+    from builders.nemotron_parse import NemotronParseModel
+
+    model = model_factory()
+    package_dir = tmp_path / "model_8_None"
+    (package_dir / "chat_template.jinja").write_text(NemotronParseModel.chat_template)
+    content = example_common.get_user_content("nemotron_parse", 1, 0, prompt) if structured else prompt
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "previous task"},
+        {"role": "assistant", "content": "previous result"},
+        {"role": "user", "content": content},
+    ]
+    rendered = example_common.apply_chat_template(str(package_dir), og.Tokenizer(model), json.dumps(messages), True)
+    assert rendered == prompt
+    processor = model.create_multimodal_processor()
+    np.testing.assert_array_equal(
+        processor(rendered, images=images)["input_ids"].as_numpy(),
+        processor(prompt, images=images)["input_ids"].as_numpy(),
+    )
+
+
+def test_example_preserves_conversational_template(model_factory, tmp_path, example_common):
+    model = model_factory(default_user_prompt=None)
+    (tmp_path / "chat_template.jinja").write_text(
+        "{{ messages[0]['content'] }}|{{ messages[-1]['content'] }}|assistant:"
+    )
+    messages = [{"role": "system", "content": "system"}, {"role": "user", "content": "hello"}]
+    rendered = example_common.apply_chat_template(str(tmp_path), og.Tokenizer(model), json.dumps(messages), True)
+    assert rendered == "system|hello|assistant:"
 
 
 @pytest.mark.parametrize("rewind_length", [0, 4, 9])
