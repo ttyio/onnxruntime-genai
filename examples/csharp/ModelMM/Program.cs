@@ -81,7 +81,7 @@ void ModelMM(
         (audios, num_audios) = Common.GetUserAudios(audioPaths, interactive);
 
         // Get user prompt
-        string text = Common.GetUserPrompt(userPrompt, interactive, allowEmpty: true);
+        string text = Common.GetUserPrompt(userPrompt, interactive);
         if (string.Compare(text, "quit()", StringComparison.OrdinalIgnoreCase) == 0)
         {
             break;

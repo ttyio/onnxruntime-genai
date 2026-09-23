@@ -88,7 +88,7 @@ void CXX_API(
     std::tie(audios, num_audios) = GetUserAudios(audio_paths, interactive);
 
     // Get user prompt
-    std::string text = GetUserPrompt(user_prompt, interactive, true);
+    std::string text = GetUserPrompt(user_prompt, interactive);
     signal(SIGINT, TerminateGeneration);
     if (text == "quit()") {
       break;  // Exit the loop

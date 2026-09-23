@@ -324,20 +324,17 @@ def test_example_rejects_invalid_prompt_default(tmp_path, example_common, config
         example_common.get_default_user_prompt(str(tmp_path), "fallback")
 
 
-@pytest.mark.parametrize("prompt", ["", "What color is the sky?", DEFAULT_TASK])
+@pytest.mark.parametrize("prompt", ["custom", "What color is the sky?", DEFAULT_TASK])
 def test_example_preserves_explicit_prompt(example_common, prompt):
-    assert example_common.get_user_prompt(prompt, non_interactive=True, allow_empty=True) == prompt
+    assert example_common.get_user_prompt(prompt, non_interactive=True) == prompt
 
 
-def test_example_interactive_default(example_common, monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda _: "")
-    assert example_common.get_user_prompt(DEFAULT_TASK, non_interactive=False, allow_empty=True) == DEFAULT_TASK
-
-
-def test_example_chat_input_still_requires_text(example_common, monkeypatch):
-    answers = iter(["", "custom"])
+@pytest.mark.parametrize("default_prompt", [DEFAULT_TASK, "What color is the sky?"])
+def test_example_interactive_empty_input_reprompts(example_common, monkeypatch, capsys, default_prompt):
+    answers = iter(["", "", "custom"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    assert example_common.get_user_prompt("fallback", non_interactive=False) == "custom"
+    assert example_common.get_user_prompt(default_prompt, non_interactive=False) == "custom"
+    assert capsys.readouterr().out.count("Error, input cannot be empty") == 2
 
 
 @pytest.mark.parametrize("configured", [None, DEFAULT_TASK, "x", ""])

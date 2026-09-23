@@ -302,11 +302,10 @@ std::string ApplyChatTemplate(const std::string& model_path, OgaTokenizer& token
  *
  * @param prompt Provided prompt
  * @param interactive Interactive mode (otherwise uses either user-provided prompt or default)
- * @param allow_empty Allow empty prompts; interactive Enter uses the provided default
  *
  * @return Prompt to use
  */
-std::string GetUserPrompt(const std::string& prompt, bool interactive, bool allow_empty = false);
+std::string GetUserPrompt(const std::string& prompt, bool interactive);
 
 /**
  * @brief Get the default user prompt from the model package

@@ -365,7 +365,7 @@ std::string GetDefaultUserPrompt(const std::string& model_path, const std::strin
   return config.at("model").value("default_user_prompt", fallback);
 }
 
-std::string GetUserPrompt(const std::string& prompt, bool interactive, bool allow_empty) {
+std::string GetUserPrompt(const std::string& prompt, bool interactive) {
   std::string text;
 
   while (true) {
@@ -374,18 +374,13 @@ std::string GetUserPrompt(const std::string& prompt, bool interactive, bool allo
       std::cout << "Prompt (Use quit() to exit):" << std::endl;
       // Clear any cin error flags because of SIGINT
       std::cin.clear();
-      if (!std::getline(std::cin, text)) {
-        throw std::runtime_error("Input ended while reading a prompt");
-      }
+      std::getline(std::cin, text);
     } else {
       // Use provided prompt (whether default or user-provided)
       text = prompt;
     }
 
-    if (text.empty() && interactive && allow_empty) {
-      text = prompt;
-    }
-    if (text.empty() && !allow_empty) {
+    if (text.empty()) {
       std::cout << "Empty input. Please enter a valid prompt." << std::endl;
       continue;  // Skip to the next iteration if input is empty
     } else {

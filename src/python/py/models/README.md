@@ -254,9 +254,10 @@ model-specific; they do not use the base decoder's fused-attention/cache pipelin
 
 The exported package declares `model.default_user_prompt` in `genai_config.json`
 as `</s><s><predict_bbox><predict_classes><output_markdown>`. The multimodal examples
-use this optional string when `--user_prompt` is omitted; explicit input, including
-an empty string, is preserved. Packages without the setting retain the examples'
-conversational default. The exported `chat_template.jinja` passes through only the
+use this optional string when `--user_prompt` is omitted in non-interactive mode.
+Explicit nonempty prompts are preserved; interactive empty input asks again.
+Packages without the setting retain the examples' conversational default.
+The exported `chat_template.jinja` passes through only the
 current user message's text, leaving special-token handling to the processor.
 Re-export existing packages to use these metadata-driven example defaults.
 
@@ -297,12 +298,16 @@ Run the exported package through the shared multimodal example:
 python examples/python/model-mm.py -m path_to_output_folder --image_paths document.png --non_interactive
 ```
 
-For Nemotron Parse, omitting `--user_prompt` (or passing an empty string) uses
+For Nemotron Parse, omitting `--user_prompt` in non-interactive mode uses
 `</s><s><predict_bbox><predict_classes><output_markdown>`. The processor adds
 the decoder-start token and tokenizer BOS/EOS tokens, making the default task
 eight input tokens. Custom task prompts are tokenized the same way; count tokens,
 not characters or words. All prompts must be shorter than `context_length` to
 leave room for generation.
+
+The examples retain their existing empty-input retry behavior: do not pass
+`--user_prompt ""` in non-interactive mode. Direct processor API calls still
+accept empty text to select the default task.
 
 CPU/CUDA sessions accept shorter and longer prompts, independently of
 `prefill_sequence_length`. TRT-RTX eagerly creates three sessions from the same

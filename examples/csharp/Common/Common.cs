@@ -210,11 +210,10 @@ namespace CommonUtils
         /// </summary>
         /// <param name="prompt">Provided prompt</param>
         /// <param name="interactive">Interactive mode (otherwise uses either user-provided prompt or default)</param>
-        /// <param name="allowEmpty">Allow empty prompts; interactive Enter uses the provided default</param>
         /// <returns>
         /// Prompt to use
         /// </returns>
-        public static string GetUserPrompt(string prompt, bool interactive, bool allowEmpty = false)
+        public static string GetUserPrompt(string prompt, bool interactive)
         {
             string? text;
             while (true)
@@ -229,15 +228,7 @@ namespace CommonUtils
                     text = prompt;
                 }
 
-                if (text == "" && interactive && allowEmpty)
-                {
-                    text = prompt;
-                }
-                if (text is null)
-                {
-                    throw new EndOfStreamException("Input ended while reading a prompt");
-                }
-                if (text.Length == 0 && !allowEmpty)
+                if (string.IsNullOrEmpty(text))
                 {
                     Console.WriteLine("Empty input. Please enter a valid prompt.");
                     continue;  // Skip to the next iteration if input is empty

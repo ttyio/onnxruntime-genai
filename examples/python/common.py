@@ -202,14 +202,13 @@ def get_default_user_prompt(model_path: str, fallback: str) -> str:
     return prompt
 
 
-def get_user_prompt(prompt: str, non_interactive: bool, allow_empty: bool = False) -> str:
+def get_user_prompt(prompt: str, non_interactive: bool) -> str:
     """
     Get prompt for 'user' role in chat template
 
     Args:
         prompt (str): provided prompt
         non_interactive (bool): non-interactive mode (uses either provided prompt or default)
-        allow_empty (bool): allow empty prompts; interactive Enter uses the provided default
     Returns:
         str: prompt to encode
     """
@@ -223,9 +222,7 @@ def get_user_prompt(prompt: str, non_interactive: bool, allow_empty: bool = Fals
             # Use provided prompt (whether default or user-provided)
             text = prompt
 
-        if not text and not non_interactive and allow_empty:
-            text = prompt
-        if not text and not allow_empty:
+        if not text:
             print("Error, input cannot be empty")
             continue
         else:

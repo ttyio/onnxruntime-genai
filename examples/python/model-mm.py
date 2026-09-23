@@ -90,7 +90,7 @@ def main(args):
         audios, num_audios = get_user_audios(args.audio_paths, args.non_interactive)
 
         # Get user prompt
-        text = get_user_prompt(args.user_prompt, args.non_interactive, allow_empty=True)
+        text = get_user_prompt(args.user_prompt, args.non_interactive)
         if text == "quit()":
             break
 
