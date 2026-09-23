@@ -298,6 +298,10 @@ Run the exported package through the shared multimodal example:
 python examples/python/model-mm.py -m path_to_output_folder --image_paths document.png --non_interactive
 ```
 
+When `--max_length` is omitted, the Python multimodal example uses the smaller of
+`7680` and the package's configured search maximum. Explicit values are passed
+through to the runtime's normal validation.
+
 For Nemotron Parse, omitting `--user_prompt` in non-interactive mode uses
 `</s><s><predict_bbox><predict_classes><output_markdown>`. The processor adds
 the decoder-start token and tokenizer BOS/EOS tokens, making the default task

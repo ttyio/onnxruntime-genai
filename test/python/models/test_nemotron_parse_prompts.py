@@ -1,6 +1,9 @@
 import json
 import os
+import runpy
+from argparse import Namespace
 from pathlib import Path
+from unittest.mock import Mock
 
 import numpy as np
 import onnx
@@ -344,6 +347,44 @@ def test_processor_uses_package_prompt_default(model_factory, images, configured
     task = DEFAULT_TASK if configured is None else configured
     expected = [2, 0, *og.Tokenizer(model).encode(task).tolist(), 2]
     np.testing.assert_array_equal(actual, [expected])
+
+
+@pytest.mark.parametrize("model_type", ["nemotron_parse", "gemma3"])
+@pytest.mark.parametrize("package_max, explicit_max, expected", [
+    (1032, None, 1032),
+    (4096, None, 4096),
+    (8192, None, 7680),
+    (1032, 512, 512),
+    (8192, 8000, 8000),
+    (1032, 2048, 2048),
+])
+def test_multimodal_example_max_length(
+    example_common, monkeypatch, model_type, package_max, explicit_max, expected
+):
+    main = runpy.run_path(str(Path(__file__).parents[3] / "examples/python/model-mm.py"))["main"]
+    runtime = Mock()
+    runtime.Model.return_value.type = model_type
+    params = runtime.GeneratorParams.return_value
+    params.get_search_options.return_value = {"max_length": package_max}
+    runtime.Generator.return_value.is_done.return_value = True
+    monkeypatch.setitem(main.__globals__, "og", runtime)
+    for name, result in {
+        "register_ep": None,
+        "get_config": None,
+        "get_user_images": (None, 0),
+        "get_user_audios": (None, 0),
+        "apply_chat_template": DEFAULT_TASK,
+    }.items():
+        monkeypatch.setitem(main.__globals__, name, Mock(return_value=result))
+    args = Namespace(
+        model_path="unused", execution_provider="cpu", ep_path=None, use_winml=False,
+        user_prompt=DEFAULT_TASK, system_prompt="system", debug=False, verbose=False,
+        response_format="", timings=False, non_interactive=True, image_paths=[], audio_paths=[],
+    )
+    if explicit_max is not None:
+        args.max_length = explicit_max
+    main(args)
+    assert params.set_search_options.call_args.kwargs["max_length"] == expected
 
 
 @pytest.mark.parametrize("structured", [False, True])

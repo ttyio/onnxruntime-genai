@@ -37,9 +37,6 @@ def main(args):
     # Create model
     config = get_config(args.model_path, args.execution_provider, args.ep_path)
     model = og.Model(config)
-    # Nemotron Parse uses the fixed context length from its model package.
-    if not hasattr(args, "max_length") and model.type != "nemotron_parse":
-        args.max_length = 7680
     if args.verbose:
         print("Model loaded")
 
@@ -106,6 +103,7 @@ def main(args):
 
         # Initialize generator params
         params = og.GeneratorParams(model)
+        search_options.setdefault("max_length", min(7680, params.get_search_options()["max_length"]))
         params.set_search_options(**search_options)
         if args.verbose:
             print(f"GeneratorParams created: {search_options}")

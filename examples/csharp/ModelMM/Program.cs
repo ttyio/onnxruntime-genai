@@ -270,7 +270,7 @@ RootCommand GetArgs()
     )
     {
         Arity = ArgumentArity.ExactlyOne,
-        Description = "User prompt. Defaults to the package's default_user_prompt, or the example default when absent. Model prompt restrictions apply."
+        Description = "User prompt. Defaults to the package prompt when omitted."
     };
 
     var rewind = new Option<bool>(
