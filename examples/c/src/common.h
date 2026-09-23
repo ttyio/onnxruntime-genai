@@ -235,10 +235,11 @@ struct GuidanceArgs {
  * @param rewind Rewind to the system prompt after each generation
  * @param image_paths File paths to images
  * @param audio_paths File paths to audios
+ * @param use_model_prompt_default Use the package prompt default when --user_prompt is omitted
  *
  * @return true if command-line arguments can be parsed, else false
  */
-bool ParseArgs(int argc, char** argv, GeneratorParamsArgs& generator_params_args, GuidanceArgs& guidance_args, std::string& model_path, std::string& ep, std::string& ep_path, std::string& system_prompt, std::string& user_prompt, bool& verbose, bool& debug, bool& interactive, bool& rewind, std::vector<std::string>& image_paths, std::vector<std::string>& audio_paths, bool* user_prompt_provided = nullptr);
+bool ParseArgs(int argc, char** argv, GeneratorParamsArgs& generator_params_args, GuidanceArgs& guidance_args, std::string& model_path, std::string& ep, std::string& ep_path, std::string& system_prompt, std::string& user_prompt, bool& verbose, bool& debug, bool& interactive, bool& rewind, std::vector<std::string>& image_paths, std::vector<std::string>& audio_paths, bool use_model_prompt_default = false);
 
 /**
  * @brief Set log options inside ORT GenAI

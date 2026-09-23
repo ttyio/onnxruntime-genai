@@ -176,7 +176,7 @@ bool ParseArgs(
     bool& rewind,
     std::vector<std::string>& image_paths,
     std::vector<std::string>& audio_paths,
-    bool* user_prompt_provided) {
+    bool use_model_prompt_default) {
   CLI::App app{"Command-line arguments for ORT GenAI C/C++ examples"};
   argv = app.ensure_utf8(argv);
 
@@ -220,12 +220,17 @@ bool ParseArgs(
 
   try {
     app.parse(argc, argv);
-    if (user_prompt_provided) {
-      *user_prompt_provided = user_prompt_option->count() != 0;
-    }
   } catch (...) {
     std::cout << app.help() << std::endl;
     return false;
+  }
+  if (use_model_prompt_default && user_prompt_option->count() == 0) {
+    try {
+      user_prompt = GetDefaultUserPrompt(model_path, user_prompt);
+    } catch (const std::exception& e) {
+      std::cerr << "Error reading model.default_user_prompt: " << e.what() << std::endl;
+      return false;
+    }
   }
   return true;
 }

@@ -16,8 +16,6 @@
 
 OgaGenerator* g_generator = nullptr;
 
-constexpr const char* kDefaultUserPrompt = "What color is the sky?";
-
 void TerminateGeneration(int signum) {
   if (g_generator == nullptr) {
     return;
@@ -136,8 +134,7 @@ void CXX_API(
     std::string prompt;
     try {
       bool add_generation_prompt = true;
-      prompt = ApplyChatTemplate(model_path, *tokenizer, messages,
-                                 add_generation_prompt, tools);
+      prompt = ApplyChatTemplate(model_path, *tokenizer, messages, add_generation_prompt, tools);
     } catch (...) {
       prompt = text;
     }
@@ -189,12 +186,11 @@ int main(int argc, char** argv) {
   // Get command-line args
   GeneratorParamsArgs generator_params_args;
   GuidanceArgs guidance_args;
-  std::string model_path, ep = "follow_config", ep_path = "", system_prompt = "You are a helpful AI assistant.", user_prompt;
+  std::string model_path, ep = "follow_config", ep_path = "", system_prompt = "You are a helpful AI assistant.", user_prompt = "What color is the sky?";
   bool verbose = false, debug = false, interactive = true, rewind = true;
   std::vector<std::string> image_paths;
   std::vector<std::string> audio_paths;
-  bool user_prompt_provided = false;
-  if (!ParseArgs(argc, argv, generator_params_args, guidance_args, model_path, ep, ep_path, system_prompt, user_prompt, verbose, debug, interactive, rewind, image_paths, audio_paths, &user_prompt_provided)) {
+  if (!ParseArgs(argc, argv, generator_params_args, guidance_args, model_path, ep, ep_path, system_prompt, user_prompt, verbose, debug, interactive, rewind, image_paths, audio_paths, /*use_model_prompt_default=*/true)) {
     return -1;
   }
 
@@ -209,20 +205,13 @@ int main(int argc, char** argv) {
   std::cout << "Execution provider: " << ep << std::endl;
   if (!ep_path.empty()) std::cout << "Execution provider path: " << ep_path << std::endl;
   std::cout << "System prompt: " << system_prompt << std::endl;
-  if (!interactive) {
-    std::cout << "User prompt: "
-              << (user_prompt.empty() ? "<model default>" : user_prompt)
-              << std::endl;
-  }
+  if (!interactive) std::cout << "User prompt: " << user_prompt << std::endl;
   std::cout << "Verbose: " << verbose << std::endl;
   std::cout << "Interactive: " << interactive << std::endl;
   std::cout << "--------------------------" << std::endl;
   std::cout << std::endl;
 
   try {
-    if (!user_prompt_provided) {
-      user_prompt = GetDefaultUserPrompt(model_path, kDefaultUserPrompt);
-    }
     CXX_API(generator_params_args, guidance_args, model_path, ep, ep_path, image_paths, audio_paths, system_prompt, user_prompt, verbose, debug, interactive);
   } catch (const std::exception& e) {
     std::cerr << "Error: " << e.what() << std::endl;
