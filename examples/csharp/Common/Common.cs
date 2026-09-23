@@ -189,8 +189,13 @@ namespace CommonUtils
         }
 
         /// <summary>
-        /// Read the package's prompt default, preserving an explicitly empty value.
+        /// Get the default user prompt from the model package
         /// </summary>
+        /// <param name="modelPath">Path to folder containing model</param>
+        /// <param name="fallback">Prompt to use when model.default_user_prompt is absent</param>
+        /// <returns>
+        /// Package default or fallback, preserving an explicitly empty value
+        /// </returns>
         public static string GetDefaultUserPrompt(string modelPath, string fallback)
         {
             using var config = JsonDocument.Parse(File.ReadAllText(Path.Combine(modelPath, "genai_config.json")));
@@ -201,8 +206,14 @@ namespace CommonUtils
         }
 
         /// <summary>
-        /// Read a prompt. When allowEmpty is set, interactive Enter uses the supplied default.
+        /// Get prompt for 'user' role in chat template
         /// </summary>
+        /// <param name="prompt">Provided prompt</param>
+        /// <param name="interactive">Interactive mode (otherwise uses either user-provided prompt or default)</param>
+        /// <param name="allowEmpty">Allow empty prompts; interactive Enter uses the provided default</param>
+        /// <returns>
+        /// Prompt to use
+        /// </returns>
         public static string GetUserPrompt(string prompt, bool interactive, bool allowEmpty = false)
         {
             string? text;
