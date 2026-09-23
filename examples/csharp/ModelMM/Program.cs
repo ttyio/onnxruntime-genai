@@ -6,8 +6,6 @@ using Microsoft.ML.OnnxRuntimeGenAI;
 using System.CommandLine;
 using System.Text.Json;
 
-const string DefaultUserPrompt = "What color is the sky?";
-
 /// <summary>
 /// Example of model-mm
 /// </summary>
@@ -38,13 +36,11 @@ void ModelMM(
     List<string> audioPaths,
     string modelPath,
     string systemPrompt,
-    string? userPrompt,
+    string userPrompt,
     bool interactive,
     bool verbose
 )
 {
-    string effectiveUserPrompt = userPrompt ?? Common.GetDefaultUserPrompt(modelPath, DefaultUserPrompt);
-
     // Creating running list of messages
     var system_message = new Dictionary<string, object>
     {
@@ -85,7 +81,7 @@ void ModelMM(
         (audios, num_audios) = Common.GetUserAudios(audioPaths, interactive);
 
         // Get user prompt
-        string text = Common.GetUserPrompt(effectiveUserPrompt, interactive, allowEmpty: true);
+        string text = Common.GetUserPrompt(userPrompt, interactive, allowEmpty: true);
         if (string.Compare(text, "quit()", StringComparison.OrdinalIgnoreCase) == 0)
         {
             break;
@@ -124,7 +120,7 @@ void ModelMM(
         if (verbose) Console.WriteLine("Generator created");
 
         // Apply chat template
-        string prompt;
+        string prompt = "";
         try
         {
             string messages = JsonSerializer.Serialize(input_list);
@@ -268,7 +264,7 @@ RootCommand GetArgs()
         Description = "System prompt to use for the model."
     };
 
-    var user_prompt = new Option<string?>(
+    var user_prompt = new Option<string>(
         name: "user_prompt",
         aliases: ["-up", "--user_prompt"]
     )
@@ -357,7 +353,7 @@ void main(string[] args) {
     string executionProvider = parseResult.GetValue<string>("execution_provider")!;
     string epPath = parseResult.GetValue<string>("ep_path")!;
     string systemPrompt = parseResult.GetValue<string>("system_prompt")!;
-    string? userPrompt = parseResult.GetValue<string?>("user_prompt");
+    string userPrompt = parseResult.GetValue<string>("user_prompt") ?? Common.GetDefaultUserPrompt(modelPath, "What color is the sky?");
     bool verbose = parseResult.GetValue<bool>("verbose");
     bool debug = parseResult.GetValue<bool>("debug");
     bool interactive = !parseResult.GetValue<bool>("non_interactive");
@@ -381,7 +377,7 @@ void main(string[] args) {
     Console.WriteLine("System prompt: " + systemPrompt);
     if (!interactive)
     {
-        Console.WriteLine("User prompt: " + (userPrompt ?? "<model default>"));
+        Console.WriteLine("User prompt: " + userPrompt);
     }
     Console.WriteLine("Verbose: " + verbose);
     Console.WriteLine("Debug: " + debug);
