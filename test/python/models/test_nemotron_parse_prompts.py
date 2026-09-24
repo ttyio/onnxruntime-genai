@@ -14,6 +14,10 @@ from tokenizers import Tokenizer, models
 
 DEFAULT_TASK = "</s><s><predict_bbox><predict_classes><output_markdown>"
 CONTEXT_LENGTH = 32
+DEFAULT_NORMALIZATION = {
+    "image_mean": [0.48145466, 0.4578275, 0.40821073],
+    "image_std": [0.26862954, 0.26130258, 0.27577711],
+}
 
 
 def _save_graph(path, nodes, inputs, outputs, initializers=()):
@@ -30,7 +34,8 @@ def _save_graph(path, nodes, inputs, outputs, initializers=()):
 def model_factory(tmp_path):
     def create(prefill_length=8, fixed_length=None, provider="cpu", fail_decoder=False,
                decoder_run_options=None, invalid_cache=False, cache_dtype=np.float32,
-               default_user_prompt=DEFAULT_TASK):
+               default_user_prompt=DEFAULT_TASK, normalization=None,
+               vision_config_filename="vision_processing.json"):
         cache_type = helper.np_dtype_to_tensor_dtype(np.dtype(cache_dtype))
         model_dir = tmp_path / f"model_{prefill_length}_{fixed_length}"
         model_dir.mkdir()
@@ -42,6 +47,7 @@ def model_factory(tmp_path):
         else:
             config["model"]["default_user_prompt"] = default_user_prompt
         config["model"]["vision"]["num_visual_tokens"] = 1
+        config["model"]["vision"]["config_filename"] = vision_config_filename
         config["model"]["decoder"].update(
             prefill_sequence_length=prefill_length,
             hidden_size=1,
@@ -60,8 +66,11 @@ def model_factory(tmp_path):
         if decoder_run_options:
             config["model"]["decoder"]["run_options"] = decoder_run_options
         (model_dir / "genai_config.json").write_text(json.dumps(config))
-        (model_dir / "processor_config.json").write_text(
+        (model_dir / vision_config_filename).write_text(
             json.dumps({
+                "image_height": 2,
+                "image_width": 2,
+                **(DEFAULT_NORMALIZATION if normalization is None else normalization),
                 "processor": {
                     "name": "nemotron_parse_image_processor",
                     "transforms": [{
@@ -290,16 +299,26 @@ def test_runtime_rejects_fixed_prompt_when_processor_is_bypassed(model_factory):
 @pytest.mark.parametrize("prompt", ["", "x", DEFAULT_TASK])
 def test_single_prompt_list_matches_string(model_factory, images, prompt):
     processor = model_factory().create_multimodal_processor()
-    np.testing.assert_array_equal(
-        processor([prompt], images=images)["input_ids"].as_numpy(),
-        processor(prompt, images=images)["input_ids"].as_numpy(),
-    )
+    from_list = processor([prompt], images=images)
+    from_string = processor(prompt, images=images)
+    for name in ("input_ids", "pixel_values"):
+        np.testing.assert_array_equal(from_list[name].as_numpy(), from_string[name].as_numpy())
 
 
-@pytest.mark.parametrize("prompts", [[], ["x", DEFAULT_TASK]])
-def test_processor_rejects_wrong_list_size(model_factory, images, prompts):
+@pytest.mark.parametrize("prompt", ["", [""], []])
+@pytest.mark.parametrize("default_prompt", [DEFAULT_TASK, "x"])
+def test_empty_prompt_forms_select_default_task(model_factory, images, prompt, default_prompt):
+    processor = model_factory(default_user_prompt=default_prompt).create_multimodal_processor()
+    actual = processor(prompt, images=images)
+    expected = processor(default_prompt, images=images)
+    for name in ("input_ids", "pixel_values"):
+        np.testing.assert_array_equal(actual[name].as_numpy(), expected[name].as_numpy())
+
+
+@pytest.mark.parametrize("prompts", [["x", DEFAULT_TASK], ["", ""]])
+def test_processor_rejects_multiple_prompts(model_factory, images, prompts):
     processor = model_factory().create_multimodal_processor()
-    with pytest.raises(RuntimeError, match="exactly one prompt"):
+    with pytest.raises(RuntimeError, match="does not support multiple prompts"):
         processor(prompts, images=images)
 
 
@@ -510,6 +529,9 @@ def test_in_place_cache_across_multiple_steps(model_factory, images, tmp_path, p
         generator.generate_next_token()
         generator.set_runtime_option("enable_profiling", "0")
         consumed = generator.get_sequence(0)[:-1]
+        expected_mask = np.zeros((1, CONTEXT_LENGTH), dtype=np.int64)
+        expected_mask[:, :len(consumed)] = 1
+        np.testing.assert_array_equal(generator.get_input("decoder_attention_mask"), expected_mask)
         expected = np.zeros((1, 1, CONTEXT_LENGTH, 1), dtype=cache_dtype)
         expected[0, 0, :len(consumed), 0] = consumed
         for kind in ("key", "value"):
@@ -529,13 +551,17 @@ def test_in_place_cache_across_multiple_steps(model_factory, images, tmp_path, p
 
 
 @pytest.mark.parametrize("height,width", [(1, 1), (2, 2), (7, 3), (3, 7)])
-def test_pixels_match_checkpoint_resize_pad_normalize(model_factory, tmp_path, height, width):
+@pytest.mark.parametrize("normalization", [
+    DEFAULT_NORMALIZATION,
+    {"image_mean": [0.1, 0.2, 0.3], "image_std": [0.5, 0.75, 1.0]},
+], ids=["checkpoint", "configured"])
+def test_pixels_match_checkpoint_resize_pad_normalize(model_factory, tmp_path, height, width, normalization):
     cv2 = pytest.importorskip("cv2")
     image_module = pytest.importorskip("PIL.Image")
     pixels = np.random.default_rng(1).integers(0, 256, (height, width, 3), dtype=np.uint8)
     path = tmp_path / "pixels.png"
     image_module.fromarray(pixels).save(path)
-    processor = model_factory().create_multimodal_processor()
+    processor = model_factory(normalization=normalization).create_multimodal_processor()
     actual = processor("", images=og.Images.open(str(path)))["pixel_values"].as_numpy()
 
     resized_h, resized_w = height, width
@@ -548,8 +574,58 @@ def test_pixels_match_checkpoint_resize_pad_normalize(model_factory, tmp_path, h
     canvas = np.full((2, 2, 3), 255, dtype=np.uint8)
     top, left = (2 - resized_h) // 2, (2 - resized_w) // 2
     canvas[top:top + resized_h, left:left + resized_w] = resized
-    mean = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
-    std = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
+    mean = np.array(normalization["image_mean"], dtype=np.float32)
+    std = np.array(normalization["image_std"], dtype=np.float32)
     expected = ((canvas.astype(np.float32) / 255 - mean) / std).transpose(2, 0, 1)[None]
     # OpenCV rounds resized uint8 pixels; the native bilinear path retains fractions.
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1.1 / (255 * std.min()))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("image_mean", None), ("image_std", None),
+    ("image_mean", []), ("image_mean", [0.1, 0.2]),
+    ("image_std", [1, 1, 1, 1]), ("image_std", [1, 0, 1]),
+    ("image_std", [1, -1, 1]), ("image_std", [1, 1e-50, 1]),
+    ("image_mean", [1e100, 0, 0]), ("image_std", [1, "invalid", 1]),
+    ("image_mean", 0.5), ("image_std", True),
+])
+def test_rejects_invalid_normalization_config(model_factory, field, value):
+    normalization = dict(DEFAULT_NORMALIZATION)
+    if value is None:
+        del normalization[field]
+    else:
+        normalization[field] = value
+    model = model_factory(normalization=normalization)
+    with pytest.raises(RuntimeError, match=field):
+        model.create_multimodal_processor()
+
+
+def test_uses_configured_vision_processing_filename(model_factory, images):
+    model = model_factory(vision_config_filename="custom_vision.json")
+    processor = model.create_multimodal_processor()
+    assert processor("", images=images)["pixel_values"].as_numpy().shape == (1, 3, 2, 2)
+
+
+@pytest.mark.parametrize("field", ["image_height", "image_width"])
+@pytest.mark.parametrize("value", [0, -1, 3, 2.5, "2", None])
+def test_rejects_processing_dimensions_inconsistent_with_graph(model_factory, field, value):
+    model = model_factory(normalization={**DEFAULT_NORMALIZATION, field: value})
+    with pytest.raises(RuntimeError, match="Invalid Nemotron Parse vision processing config"):
+        model.create_multimodal_processor()
+
+
+def test_legacy_processing_dimensions_come_from_graph(model_factory, tmp_path, images):
+    model = model_factory()
+    path = tmp_path / "model_8_None" / "vision_processing.json"
+    config = json.loads(path.read_text())
+    del config["image_height"], config["image_width"]
+    path.write_text(json.dumps(config))
+    processor = model.create_multimodal_processor()
+    assert processor("", images=images)["pixel_values"].as_numpy().shape == (1, 3, 2, 2)
+
+
+def test_missing_vision_processing_file_has_clear_error(model_factory, tmp_path):
+    model = model_factory()
+    (tmp_path / "model_8_None" / "vision_processing.json").unlink()
+    with pytest.raises(RuntimeError, match="Cannot open.*vision_processing.json"):
+        model.create_multimodal_processor()

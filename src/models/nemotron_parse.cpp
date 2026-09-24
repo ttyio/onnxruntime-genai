@@ -4,9 +4,9 @@
 #include "generator/generators.h"
 #include "nemotron_parse.h"
 #include "models/io/cross_kv_cache.h"
-#include "models/io/default_position_inputs.h"
 #include "models/io/input_ids.h"
 #include "models/io/logits.h"
+#include "models/io/default_position_inputs.h"
 #include "models/io/tensor_scatter_kv_cache.h"
 
 #include <atomic>
@@ -164,7 +164,7 @@ class DecoderState : public State {
         attention_mask_{
             model, *this, sequence_lengths,
             model.config_->model.decoder.inputs.attention_mask,
-            {AttentionMaskMode::Static, model.config_->model.context_length}},
+            model.config_->model.context_length},
         self_cache_{*this},
         logits_{*this} {
     input_ids_.Add();

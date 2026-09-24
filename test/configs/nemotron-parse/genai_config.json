@@ -15,7 +15,7 @@
     },
     "vision": {
       "filename": "encoder.onnx",
-      "config_filename": "processor_config.json",
+      "config_filename": "vision_processing.json",
       "inputs": {"pixel_values": "pixel_values"},
       "outputs": {"image_features": "encoder_hidden_states"},
       "num_visual_tokens": 3201

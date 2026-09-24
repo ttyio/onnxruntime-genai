@@ -576,7 +576,6 @@ struct Config {
         std::string present_key_scale_names;
         std::string present_value_scale_names;
         std::string present_names;  // When key/value pairs are combined
-        std::string cross_present_key_names, cross_present_value_names;
         std::string output_cross_qk_names{Defaults::OutputCrossQKName};
         std::string rnn_states{Defaults::RnnStatesName};
         std::string present_conv_names{Defaults::PresentConvName};  // Conv cache output name template (LFM2)
